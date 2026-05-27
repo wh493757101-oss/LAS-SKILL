@@ -57,11 +57,10 @@ export TOS_ACCESS_KEY="your-access-key"        # TOS Access Key
 export TOS_SECRET_KEY="your-secret-key"        # TOS Secret Key
 export TOS_ENDPOINT="tos-cn-guangzhou.volces.com"  # TOS Endpoint
 
-# ========== Ark API（文件上传 / LLM Judge 评测）==========
-export ARK_HIGHLIGHT_API_KEY="your-ark-key"    # Ark Files 上传 API Key
-export ARK_JUDGE_API_KEY="your-judge-key"      # LLM Judge API Key（DashScope）
-export ARK_JUDGE_MODEL="qwen3.5-omni-plus"     # LLM Judge 模型
-export ARK_JUDGE_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"  # LLM Judge Base URL
+# ========== LLM Judge 评测（可选）==========
+export ARK_JUDGE_API_KEY="your-judge-key"      # LLM Judge API Key
+export ARK_JUDGE_MODEL="your-model"            # LLM Judge 模型（如 qwen3.5-omni-plus）
+export ARK_JUDGE_BASE_URL="your-base-url"      # LLM Judge Base URL
 ```
 
 ## 使用示例
