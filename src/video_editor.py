@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ class EditResult:
     output_path: str
     segments: list[dict[str, Any]] = field(default_factory=list)
     source: str = "las"
+    session_tos_path: str = ""
 
 
 class VideoEditor:
@@ -55,7 +57,9 @@ class VideoEditor:
     ) -> EditResult:
         video_url = self._resolve_video_url(video_path)
 
-        output_tos_path = self.config.output_tos_path or os.environ.get("TOS_OUTPUT_PATH", "")
+        base_tos = self.config.output_tos_path or os.environ.get("TOS_OUTPUT_PATH", "")
+        session_name = Path(video_path).stem + "_" + time.strftime("%Y%m%d_%H%M%S")
+        output_tos_path = str(Path(base_tos.rstrip("/")) / session_name) + "/"
         task_input: dict[str, Any] = {
             "video_url": video_url,
             "task_description": description,
@@ -104,6 +108,7 @@ class VideoEditor:
             output_path=output_url,
             segments=segments,
             source="las",
+            session_tos_path=output_tos_path,
         )
 
     def _resolve_video_url(self, video_path: str) -> str:

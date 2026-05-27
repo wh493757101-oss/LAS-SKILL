@@ -100,15 +100,32 @@ class VideoHighlightPipeline:
         logger.info("LAS 端到端剪辑完成: source=%s, output=%s, segments=%d",
                     edit.source, edit.output_path, len(edit.segments))
 
-        json_path = Path(session_dir) / "result.json"
-        json_path.write_text(self.export_json(
-            PipelineResult(metadata=metadata, edit=edit)
-        ), encoding="utf-8")
+        self._upload_result_to_tos(edit.session_tos_path, metadata, edit)
 
         return PipelineResult(
             metadata=metadata, edit=edit, session_dir=session_dir,
             elapsed_time=time.time() - t_start,
         )
+
+    def _upload_result_to_tos(self, tos_dir: str, metadata: VideoMetadata, edit: EditResult) -> None:
+        import os as _os
+        import tos as _tos
+
+        _ak = _os.environ.get("TOS_ACCESS_KEY", "")
+        _sk = _os.environ.get("TOS_SECRET_KEY", "")
+        if not _ak or not _sk or not tos_dir:
+            return
+
+        try:
+            _client = _tos.TosClientV2(_ak, _sk, "tos-cn-guangzhou.volces.com", "cn-guangzhou")
+            _bucket = "arkclaw-tos-2124145136-cn-guangzhou"
+
+            result_json = self.export_json(PipelineResult(metadata=metadata, edit=edit))
+            _key = tos_dir.replace("tos://" + _bucket + "/", "") + "result.json"
+            _client.put_object(_bucket, _key, result_json.encode("utf-8"))
+            logger.info("result.json 已上传到 TOS: tos://%s/%s", _bucket, _key)
+        except Exception as e:
+            logger.warning("TOS 上传 result.json 失败: %s", e)
 
     def run_from_path(
         self,
@@ -187,6 +204,7 @@ class VideoHighlightPipeline:
                 "source": result.edit.source,
                 "output_path": result.edit.output_path,
                 "segments": result.edit.segments,
+                "session_tos_path": result.edit.session_tos_path,
             }
 
         if result.error:
