@@ -19,7 +19,7 @@ class EvalRunConfig:
     output_dir: str = ""
     iou_threshold: float = 0.5
     skip_llm_judge: bool = False
-    skip_edit: bool = True
+    skip_edit: bool = False
     case_filter: list[str] = field(default_factory=list)
     judge_weight: float = 0.5
     judge_max_retries: int = 3
