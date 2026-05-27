@@ -47,9 +47,21 @@ pip install -e ".[dev]"
 ## 环境变量
 
 ```bash
-export LAS_API_KEY="your-las-api-key"          # LAS 算子 API Key（必需）
-export TOS_ACCESS_KEY="your-access-key"        # TOS Access Key（本地文件上传时必需）
-export TOS_SECRET_KEY="your-secret-key"        # TOS Secret Key（本地文件上传时必需）
+# ========== LAS 云端剪辑（必需）==========
+export LAS_API_KEY="your-las-api-key"          # LAS 算子 API Key
+export LAS_OPERATOR_ID="las_video_edit"        # LAS 算子 ID
+export TOS_OUTPUT_PATH="tos://bucket/output/"  # LAS 剪辑输出路径（tos:// 目录）
+
+# ========== TOS 对象存储（本地文件上传时必需）==========
+export TOS_ACCESS_KEY="your-access-key"        # TOS Access Key
+export TOS_SECRET_KEY="your-secret-key"        # TOS Secret Key
+export TOS_ENDPOINT="tos-cn-guangzhou.volces.com"  # TOS Endpoint
+
+# ========== Ark API（文件上传 / LLM Judge 评测）==========
+export ARK_HIGHLIGHT_API_KEY="your-ark-key"    # Ark Files 上传 API Key
+export ARK_JUDGE_API_KEY="your-judge-key"      # LLM Judge API Key（DashScope）
+export ARK_JUDGE_MODEL="qwen3.5-omni-plus"     # LLM Judge 模型
+export ARK_JUDGE_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"  # LLM Judge Base URL
 ```
 
 ## 使用示例
