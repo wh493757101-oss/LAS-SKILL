@@ -35,8 +35,8 @@ LAS 失败直接报错，不降级。
 ## 安装
 
 ```bash
-git clone https://github.com/wh493757101-oss/Video-Highlight-Skill.git
-cd Video-Highlight-Skill
+git clone https://github.com/wh493757101-oss/LAS-SKILL.git
+cd LAS-SKILL
 pip install -e ".[dev]"
 ```
 
