@@ -47,7 +47,6 @@ class ReportGenerator:
         lines.append(f"    不合格 (<0.5): {eval_report.iou_distribution.get('unqualified', 0)}")
         lines.append("")
         lines.append(f"  异常率:    {eval_report.exception_rate:.1%} ({eval_report.exception_count}/{eval_report.total_count})")
-        lines.append(f"  降级率:    {eval_report.degradation_rate:.1%} ({eval_report.degraded_count} cases)")
         lines.append("")
         lines.append("## 性能 & 成本")
         lines.append("")
@@ -73,22 +72,19 @@ class ReportGenerator:
             lines.append("")
             lines.append("  按视频类型:")
             for cat, stats in eval_report.by_category.items():
-                deg = stats.get("degradation_rate", 0.0)
-                lines.append(f"    {cat}: F1={stats['f1']:.3f}, 降级率={deg:.0%} (n={stats['count']})")
+                lines.append(f"    {cat}: F1={stats['f1']:.3f} (n={stats['count']})")
 
         if eval_report.by_difficulty:
             lines.append("")
             lines.append("  按难度:")
             for dif, stats in eval_report.by_difficulty.items():
-                deg = stats.get("degradation_rate", 0.0)
-                lines.append(f"    {dif}: F1={stats['f1']:.3f}, 降级率={deg:.0%} (n={stats['count']})")
+                lines.append(f"    {dif}: F1={stats['f1']:.3f} (n={stats['count']})")
 
         if eval_report.by_source:
             lines.append("")
             lines.append("  按来源:")
             for src, stats in eval_report.by_source.items():
-                deg = stats.get("degradation_rate", 0.0)
-                lines.append(f"    {src}: F1={stats['f1']:.3f}, 降级率={deg:.0%} (n={stats['count']})")
+                lines.append(f"    {src}: F1={stats['f1']:.3f} (n={stats['count']})")
 
         lines.append("")
         lines.append("  各用例详情:")
@@ -226,29 +222,16 @@ class ReportGenerator:
                     "concurrency": eval_report.cost.concurrency,
                     "concurrent_throughput": round(eval_report.cost.concurrent_throughput, 2),
                 },
-                "degradation_rate": round(eval_report.degradation_rate, 3),
                 "by_category": {
-                    k: {
-                        "f1": round(v["f1"], 3),
-                        "count": v["count"],
-                        "degradation_rate": round(v.get("degradation_rate", 0), 3),
-                    }
+                    k: {"f1": round(v["f1"], 3), "count": v["count"]}
                     for k, v in eval_report.by_category.items()
                 },
                 "by_difficulty": {
-                    k: {
-                        "f1": round(v["f1"], 3),
-                        "count": v["count"],
-                        "degradation_rate": round(v.get("degradation_rate", 0), 3),
-                    }
+                    k: {"f1": round(v["f1"], 3), "count": v["count"]}
                     for k, v in eval_report.by_difficulty.items()
                 },
                 "by_source": {
-                    k: {
-                        "f1": round(v["f1"], 3),
-                        "count": v["count"],
-                        "degradation_rate": round(v.get("degradation_rate", 0), 3),
-                    }
+                    k: {"f1": round(v["f1"], 3), "count": v["count"]}
                     for k, v in eval_report.by_source.items()
                 },
                 "cases": [

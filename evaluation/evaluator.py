@@ -38,7 +38,6 @@ class CaseScore:
     iou_distribution: dict[str, int] = field(default_factory=dict)
     matched_pairs: list[SegmentMatch] = field(default_factory=list)
     error: str | None = None
-    degraded: bool = False
 
 
 @dataclass
@@ -75,8 +74,6 @@ class EvalReport:
     exception_rate: float = 0.0
     exception_count: int = 0
     total_count: int = 0
-    degraded_count: int = 0
-    degradation_rate: float = 0.0
     cost: CostStats = field(default_factory=CostStats)
     by_category: dict[str, dict[str, Any]] = field(default_factory=dict)
     by_difficulty: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -178,7 +175,6 @@ class HighlightEvaluator:
         category: str = "",
         difficulty: str = "",
         source_type: str = "local",
-        degraded: bool = False,
     ) -> CaseScore:
         if not ground_truth:
             return CaseScore(
@@ -234,7 +230,6 @@ class HighlightEvaluator:
             mae=mae,
             iou_distribution=iou_dist,
             matched_pairs=matches,
-            degraded=degraded,
         )
 
     def evaluate_all(self, results: list[dict[str, Any]]) -> EvalReport:
@@ -255,9 +250,6 @@ class HighlightEvaluator:
         cat_scores: dict[str, list[float]] = {}
         dif_scores: dict[str, list[float]] = {}
         src_scores: dict[str, list[float]] = {}
-        cat_deg_counts: dict[str, int] = {}
-        dif_deg_counts: dict[str, int] = {}
-        src_deg_counts: dict[str, int] = {}
         cat_counts: dict[str, int] = {}
         dif_counts: dict[str, int] = {}
         src_counts: dict[str, int] = {}
@@ -270,7 +262,6 @@ class HighlightEvaluator:
                 category=r.get("category", ""),
                 difficulty=r.get("difficulty", ""),
                 source_type=r.get("source_type", "local"),
-                degraded=r.get("degraded", False),
             )
             report.scores.append(score)
 
@@ -296,10 +287,7 @@ class HighlightEvaluator:
             cat_counts[score.category] = cat_counts.get(score.category, 0) + 1
             dif_counts[score.difficulty] = dif_counts.get(score.difficulty, 0) + 1
             src_counts[score.source_type] = src_counts.get(score.source_type, 0) + 1
-            if score.degraded:
-                cat_deg_counts[score.category] = cat_deg_counts.get(score.category, 0) + 1
-                dif_deg_counts[score.difficulty] = dif_deg_counts.get(score.difficulty, 0) + 1
-                src_deg_counts[score.source_type] = src_deg_counts.get(score.source_type, 0) + 1
+
 
         n = len([s for s in report.scores if not s.error]) or 1
         report.overall_precision = total_precision / n
@@ -313,34 +301,18 @@ class HighlightEvaluator:
         report.exception_count = len([s for s in report.scores if s.error])
         report.total_count = len(report.scores)
         report.exception_rate = report.exception_count / report.total_count if report.total_count > 0 else 0.0
-        valid_scores = [s for s in report.scores if not s.error]
-        report.degraded_count = sum(1 for s in valid_scores if s.degraded)
-        report.degradation_rate = report.degraded_count / len(valid_scores) if valid_scores else 0.0
-
         report.cost = self._aggregate_costs(results)
 
         report.by_category = {
-            k: {
-                "f1": sum(v) / len(v),
-                "count": len(v),
-                "degradation_rate": cat_deg_counts.get(k, 0) / cat_counts.get(k, 1),
-            }
+            k: {"f1": sum(v) / len(v), "count": len(v)}
             for k, v in cat_scores.items()
         }
         report.by_difficulty = {
-            k: {
-                "f1": sum(v) / len(v),
-                "count": len(v),
-                "degradation_rate": dif_deg_counts.get(k, 0) / dif_counts.get(k, 1),
-            }
+            k: {"f1": sum(v) / len(v), "count": len(v)}
             for k, v in dif_scores.items()
         }
         report.by_source = {
-            k: {
-                "f1": sum(v) / len(v) if v else 0.0,
-                "count": len(v),
-                "degradation_rate": src_deg_counts.get(k, 0) / src_counts.get(k, 1) if src_counts.get(k, 0) > 0 else 0.0,
-            }
+            k: {"f1": sum(v) / len(v) if v else 0.0, "count": len(v)}
             for k, v in src_scores.items()
         }
 

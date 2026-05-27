@@ -126,8 +126,6 @@ class EvalRunner:
         _, peak_bytes = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
-        predicted: list[dict[str, Any]] = []
-        degraded = False
         if result.edit and result.edit.segments:
             predicted = [
                 {
@@ -137,7 +135,6 @@ class EvalRunner:
                 }
                 for seg in result.edit.segments
             ]
-            degraded = result.edit.degraded
 
         return {
             "case_id": case["case_id"],
@@ -151,7 +148,6 @@ class EvalRunner:
             "usage": {},
             "video_duration": result.metadata.duration,
             "elapsed_time": result.elapsed_time,
-            "degraded": degraded,
             "api_calls": 1,
             "api_retries": 0,
             "memory_peak_mb": peak_bytes / (1024 * 1024),
