@@ -1,10 +1,8 @@
 import json
-from pathlib import Path
 
-import numpy as np
 import pytest
 
-from src.main import DegradationRecord, PipelineConfig, PipelineResult, VideoHighlightPipeline
+from src.main import PipelineConfig, PipelineResult, VideoHighlightPipeline
 from src.video_editor import EditResult
 from src.video_fetcher import LocalFileSource, UrlSource, VideoMetadata
 
@@ -186,40 +184,6 @@ class TestVideoHighlightPipeline:
         assert "#2: 8.0s - 12.0s" in formatted
         assert "las" in formatted
 
-    def test_format_result_with_degradations(self, tmp_path):
-        metadata = VideoMetadata(
-            path=str(tmp_path / "video.mp4"),
-            duration=15.0,
-            fps=30.0,
-            width=1920,
-            height=1080,
-        )
-        edit = EditResult(
-            output_path=str(tmp_path / "highlight_reel.mp4"),
-            source="las",
-            segments=[{"start_time": 2.0, "end_time": 5.0, "score": 0.9}],
-        )
-        result = PipelineResult(
-            metadata=metadata,
-            edit=edit,
-            degradations=[
-                DegradationRecord(
-                    stage="视频预处理",
-                    from_path="原始格式",
-                    to_path="MP4 转码",
-                    reason="视频格式不兼容",
-                ),
-            ],
-        )
-
-        pipeline = VideoHighlightPipeline()
-        formatted = pipeline.format_result(result)
-
-        assert "[降级说明]" in formatted
-        assert "原始格式" in formatted
-        assert "MP4 转码" in formatted
-        assert "视频格式不兼容" in formatted
-
     def test_format_result_with_error(self, tmp_path):
         metadata = VideoMetadata(
             path=str(tmp_path / "video.mp4"),
@@ -263,41 +227,6 @@ class TestVideoHighlightPipeline:
         assert data["edit"]["source"] == "las"
         assert len(data["edit"]["segments"]) == 1
         assert data["edit"]["segments"][0]["score"] == 0.9
-
-    def test_export_json_with_degradations(self, tmp_path):
-        metadata = VideoMetadata(
-            path=str(tmp_path / "video.mp4"),
-            duration=10.0,
-            fps=30.0,
-            width=1920,
-            height=1080,
-        )
-        edit = EditResult(
-            output_path=str(tmp_path / "out.mp4"),
-            source="las",
-            segments=[{"start_time": 1.0, "end_time": 3.0, "score": 0.9}],
-        )
-        result = PipelineResult(
-            metadata=metadata,
-            edit=edit,
-            degradations=[
-                DegradationRecord(
-                    stage="视频预处理",
-                    from_path="原始格式",
-                    to_path="MP4 转码",
-                    reason="视频格式不兼容",
-                ),
-            ],
-        )
-
-        pipeline = VideoHighlightPipeline()
-        exported = pipeline.export_json(result)
-        data = json.loads(exported)
-
-        assert "degradations" in data
-        assert len(data["degradations"]) == 1
-        assert data["degradations"][0]["stage"] == "视频预处理"
-        assert data["degradations"][0]["reason"] == "视频格式不兼容"
 
     def test_export_json_with_error(self, tmp_path):
         metadata = VideoMetadata(

@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,20 +25,11 @@ class PipelineConfig:
 
 
 @dataclass
-class DegradationRecord:
-    stage: str
-    from_path: str
-    to_path: str
-    reason: str
-
-
-@dataclass
 class PipelineResult:
     metadata: VideoMetadata
     edit: EditResult | None = None
     error: str | None = None
     session_dir: str = ""
-    degradations: list[DegradationRecord] = field(default_factory=list)
     elapsed_time: float = 0.0
 
 
@@ -94,7 +84,6 @@ class VideoHighlightPipeline:
         skip_edit: bool = False,
     ) -> PipelineResult:
         t_start = time.time()
-        degradations: list[DegradationRecord] = []
 
         metadata = self.fetcher.fetch(source)
         logger.info("视频预处理完成: duration=%.1fs, fps=%.1f", metadata.duration, metadata.fps)
@@ -104,7 +93,6 @@ class VideoHighlightPipeline:
         if skip_edit:
             return PipelineResult(
                 metadata=metadata, session_dir=session_dir,
-                degradations=degradations,
             )
 
         self.config.editor.output_dir = session_dir
@@ -114,12 +102,11 @@ class VideoHighlightPipeline:
 
         json_path = Path(session_dir) / "result.json"
         json_path.write_text(self.export_json(
-            PipelineResult(metadata=metadata, edit=edit, degradations=degradations)
+            PipelineResult(metadata=metadata, edit=edit)
         ), encoding="utf-8")
 
         return PipelineResult(
             metadata=metadata, edit=edit, session_dir=session_dir,
-            degradations=degradations,
             elapsed_time=time.time() - t_start,
         )
 
@@ -178,12 +165,6 @@ class VideoHighlightPipeline:
             lines.append("\n[剪辑输出]")
             lines.append(f"  输出路径: {result.edit.output_path}")
 
-        if result.degradations:
-            lines.append("\n[降级说明]")
-            for d in result.degradations:
-                lines.append(f"  {d.stage}: {d.from_path} → {d.to_path}")
-                lines.append(f"    原因: {d.reason}")
-
         if result.error:
             lines.append(f"\n[警告] {result.error}")
 
@@ -207,17 +188,6 @@ class VideoHighlightPipeline:
                 "output_path": result.edit.output_path,
                 "segments": result.edit.segments,
             }
-
-        if result.degradations:
-            output["degradations"] = [
-                {
-                    "stage": d.stage,
-                    "from": d.from_path,
-                    "to": d.to_path,
-                    "reason": d.reason,
-                }
-                for d in result.degradations
-            ]
 
         if result.error:
             output["error"] = result.error
