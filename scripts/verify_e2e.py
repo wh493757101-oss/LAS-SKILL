@@ -1,4 +1,4 @@
-"""端到端验证脚本 — 测试完整 Pipeline：视频获取 → LAS 端到端识别+剪辑 → 评测"""
+"""端到端验证脚本 — 测试完整 Pipeline：视频获取 → 多模态识别 → FFmpeg 拼接 → 评测"""
 import os
 import sys
 import logging
@@ -18,12 +18,12 @@ if _ENV_FILE.exists():
 
 def check_env():
     missing = []
-    for key in ["LAS_API_KEY"]:
+    for key in ["ARK_HIGHLIGHT_API_KEY"]:
         if not os.getenv(key):
             missing.append(key)
     if missing:
         logger.error("缺少环境变量: %s", ", ".join(missing))
-        logger.error("请设置 .env 文件中的必要变量: LAS_API_KEY")
+        logger.error("请设置 .env 文件中的必要变量: ARK_HIGHLIGHT_API_KEY")
         return False
     logger.info("环境变量 OK")
     return True
@@ -60,7 +60,7 @@ def verify_editing(video_path: str):
     from src.video_fetcher import LocalFileSource
 
     logger.info("=" * 60)
-    logger.info("Step 2: 完整 Pipeline 验证（LAS 端到端识别+剪辑）")
+    logger.info("Step 2: 完整 Pipeline 验证（多模态识别 + FFmpeg 拼接）")
     logger.info("=" * 60)
 
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "output")
@@ -75,7 +75,7 @@ def verify_editing(video_path: str):
         logger.error("Pipeline 失败: %s", result.error)
         return None
 
-    logger.info("剪辑方式: %s", result.edit.source if result.edit else "N/A")
+    logger.info("识别方式: %s", result.edit.source if result.edit else "N/A")
     logger.info("输出路径: %s", result.edit.output_path if result.edit else "N/A")
     if result.edit and result.edit.segments:
         for i, seg in enumerate(result.edit.segments):
@@ -112,10 +112,10 @@ def verify_evaluation():
     )
 
     judge_report = JudgeReport(
-        scores=[JudgeScore(rhythm=4.0, completeness=4.0, excitement=5.0,
-                           instruction_fit=4.0, overall_comment="测试通过")],
-        overall_rhythm=4.0, overall_completeness=4.0, overall_excitement=5.0,
-        overall_instruction_fit=4.0, overall_average=4.25,
+        scores=[JudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=5.0,
+                           completeness=4.0, instruction_fit=4.0, overall_comment="测试通过")],
+        overall_rhythm=4.0, overall_transition_quality=4.0, overall_audiovisual_sync=5.0,
+        overall_completeness=4.0, overall_instruction_fit=4.0, overall_average=4.2,
     )
 
     weighted = compute_weighted_score(eval_report, judge_report)

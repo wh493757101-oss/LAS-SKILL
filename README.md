@@ -1,12 +1,13 @@
 # 视频高光剪辑 Skill
 
-基于火山引擎 LAS 端到端算子，输入原始长视频 + 剪辑指令，自动识别高光片段并输出集锦视频。
+基于多模态大模型识别高光 + FFmpeg 流拷贝拼接，输入原始长视频 + 剪辑指令，自动识别高光片段并输出集锦视频。
 
 ## 核心能力
 
-1. **端到端高光识别+剪辑** — LAS 算子同时完成视频理解和高光剪辑，一步到位
-2. **结构化输出** — 输出集锦视频 + 时间戳 + 置信度评分 + 标签
-3. **多源输入** — 支持本地文件、URL、TOS 路径
+1. **多模态高光识别** — 多模态大模型根据剪辑指令识别高光片段
+2. **FFmpeg 无损拼接** — 流拷贝模式拼接，零成本、秒级完成
+3. **结构化输出** — 输出集锦视频 + 时间戳 + 置信度评分 + 标签
+4. **多源输入** — 支持本地文件、URL、TOS 路径
 
 ## 输入输出
 
@@ -17,7 +18,7 @@
 
 | 输出 | 说明 |
 |------|------|
-| 高光视频 | 剪辑后的集锦视频（LAS 云端输出 URL） |
+| 高光视频 | 剪辑后的集锦视频（本地 mp4 文件） |
 | 时间戳说明 | 每个片段的起止时间、置信度评分、标签 |
 | JSON 导出 | 结构化片段数据，含时间戳和评分 |
 
@@ -26,33 +27,33 @@
 ```
 用户输入（视频 + 描述）
   → VideoFetcher（下载/校验/转码）
-    → VideoEditor.edit_e2e（LAS 端到端识别+剪辑）
-      → 输出（集锦视频 + 片段列表 + JSON）
+    → HighlightDetector（多模态大模型识别高光）
+      → VideoEditor.edit_with_ffmpeg（FFmpeg 流拷贝拼接）
+        → 输出（集锦视频 + 片段列表 + JSON）
 ```
 
-LAS 失败直接报错，不降级。
+多模态识别失败直接报错，不降级。
 
 ## 安装
 
 ```bash
-git clone https://github.com/wh493757101-oss/LAS-SKILL.git
-cd LAS-SKILL
+git clone https://github.com/wh493757101-oss/Video-Highlight-Skill.git
+cd Video-Highlight-Skill
 pip install -e ".[dev]"
 ```
 
 外部工具：
-- **FFmpeg** — 仅用于视频转码（非 mp4 格式时），非剪辑用途
+- **FFmpeg** — 用于视频转码和流拷贝拼接剪辑
 - **yt-dlp** — 用于 URL 视频下载（`pip install yt-dlp`）
 
 ## 环境变量
 
 ```bash
-# ========== LAS 云端剪辑（必需）==========
-export LAS_API_KEY="your-las-api-key"          # LAS 算子 API Key
-export LAS_OPERATOR_ID="las_video_edit"        # LAS 算子 ID
-export TOS_OUTPUT_PATH="tos://bucket/output/"  # LAS 剪辑输出路径（tos:// 目录）
+# ========== 多模态高光识别（必需）==========
+export ARK_HIGHLIGHT_API_KEY="your-ark-key"    # 火山引擎 Ark API Key
+export ARK_HIGHLIGHT_MODEL="your-model"        # 多模态模型（如 doubao-seed-2-0-pro）
 
-# ========== TOS 对象存储（本地文件上传时必需）==========
+# ========== TOS 对象存储（TOS 路径输入时必需）==========
 export TOS_ACCESS_KEY="your-access-key"        # TOS Access Key
 export TOS_SECRET_KEY="your-secret-key"        # TOS Secret Key
 export TOS_ENDPOINT="tos-cn-guangzhou.volces.com"  # TOS Endpoint
@@ -104,10 +105,10 @@ video-highlight-skill/
 ├── src/
 │   ├── main.py                 # Pipeline 主入口
 │   ├── video_fetcher.py        # 视频获取与预处理（校验/转码）
-│   ├── video_editor.py         # LAS 端到端剪辑
-│   ├── ark_client.py           # Ark API 封装（文件上传/LLM Judge）
-│   ├── las_client.py           # LAS 算子 API 封装
-│   ├── highlight_detector.py   # 旧版高光检测（保留，未使用）
+│   ├── video_editor.py         # FFmpeg 智能拼接（流拷贝/重编码自适应 + 音频归一化 + 转场）
+│   ├── highlight_detector.py   # 多模态大模型高光识别
+│   ├── ark_client.py           # Ark API 封装（多模态识别/文件上传/LLM Judge）
+│   ├── cost_estimator.py       # Ark token 费用估算
 │   └── rule_engine.py          # 规则引擎（保留，未使用）
 ├── evaluation/
 │   ├── evaluator.py            # tIoU 自动评测
@@ -120,7 +121,7 @@ video-highlight-skill/
 ├── scripts/
 │   ├── verify_e2e.py           # 端到端验证脚本
 │   ├── verify_e2e_strict.py    # 严格端到端验证
-│   └── verify_dual_path.py     # API 连通性验证
+│   ├── verify_connectivity.py   # API 连通性验证
 └── tests/
     └── test_*.py
 ```
@@ -199,7 +200,7 @@ print(report_text)
 
 ## 错误处理
 
-Pipeline 采用"快速失败"策略：LAS 不可用时直接返回错误，不降级到本地剪辑。
+Pipeline 采用"快速失败"策略：多模态识别不可用时直接返回错误，不降级。
 
 ```python
 result = pipeline.run_from_path("/path/to/video.mp4", description="精彩集锦")
@@ -213,10 +214,10 @@ else:
 
 | 症状 | 可能原因 | 解决方案 |
 |------|----------|----------|
-| `LAS_API_KEY 未设置` | 环境变量缺失 | `export LAS_API_KEY=your-key` |
+| `ARK_HIGHLIGHT_API_KEY 未设置` | 环境变量缺失 | `export ARK_HIGHLIGHT_API_KEY=your-key` |
 | `TOS 配置不完整` | TOS 环境变量缺失 | 设置 `TOS_ACCESS_KEY`/`TOS_SECRET_KEY` |
 | `视频下载失败` | URL 不可访问或 yt-dlp 版本过旧 | 检查 URL，升级 yt-dlp |
 | `无法打开视频` | 文件损坏或格式不支持 | 检查文件完整性 |
 | `视频转码失败` | FFmpeg 不可用或磁盘空间不足 | 安装 FFmpeg，清理磁盘 |
-| `LAS 任务超时` | 视频过大或 LAS 服务繁忙 | 重试或缩短视频 |
-| `LAS 未返回 task_id` | API Key 无效或算子不存在 | 检查 LAS_API_KEY 和算子配置 |
+| `多模态识别失败` | API Key 无效或模型不可用 | 检查 ARK_HIGHLIGHT_API_KEY 和模型配置 |
+| `FFmpeg 拼接失败` | FFmpeg 不可用或磁盘空间不足 | 安装 FFmpeg，清理磁盘 |

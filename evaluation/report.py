@@ -84,9 +84,8 @@ class ReportGenerator:
         lines.append("")
         lines.append("  阶段耗时 (平均):")
         lines.append(f"    视频获取:        {eval_report.cost.timing_fetch_avg:.1f}s")
-        lines.append(f"    视频上传:        {eval_report.cost.timing_upload_avg:.1f}s")
-        lines.append(f"    LAS 推理:        {eval_report.cost.timing_las_inference_avg:.1f}s")
-        lines.append(f"    片段导出:        {eval_report.cost.timing_clip_export_avg:.1f}s")
+        lines.append(f"    高光检测:        {eval_report.cost.timing_detection_avg:.1f}s")
+        lines.append(f"    FFmpeg 拼接:     {eval_report.cost.timing_clip_concat_avg:.1f}s")
         lines.append("")
         lines.append(f"  预估总费用:        ¥{eval_report.cost.total_cost_yuan:.2f}")
         lines.append(f"  平均费用/case:     ¥{eval_report.cost.avg_cost_yuan:.2f}")
@@ -294,9 +293,8 @@ class ReportGenerator:
                     "concurrent_throughput": round(eval_report.cost.concurrent_throughput, 2),
                     "timing": {
                         "fetch_avg": round(eval_report.cost.timing_fetch_avg, 1),
-                        "upload_avg": round(eval_report.cost.timing_upload_avg, 1),
-                        "las_inference_avg": round(eval_report.cost.timing_las_inference_avg, 1),
-                        "clip_export_avg": round(eval_report.cost.timing_clip_export_avg, 1),
+                        "detection_avg": round(eval_report.cost.timing_detection_avg, 1),
+                        "clip_concat_avg": round(eval_report.cost.timing_clip_concat_avg, 1),
                     },
                     "total_cost_yuan": eval_report.cost.total_cost_yuan,
                     "avg_cost_yuan": eval_report.cost.avg_cost_yuan,

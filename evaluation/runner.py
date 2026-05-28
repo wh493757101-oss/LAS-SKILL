@@ -162,14 +162,14 @@ class EvalRunner:
                 for seg in result.edit.segments
             ]
 
-        # 收集 token 用量（从 LAS client 获取）
-        pipeline.editor.las_client  # ensure initialized
-        las_client = pipeline.editor._las_client
+        # 收集 token 用量（从 detector 获取）
+        pipeline.detector  # ensure initialized
+        detector = pipeline._detector
         usage = {}
-        if las_client:
+        if detector:
             usage = {
-                "api_calls": las_client.call_count,
-                "api_retries": las_client.retry_count,
+                "api_calls": detector.call_count,
+                "api_retries": detector.retry_count,
             }
 
         # 收集阶段耗时

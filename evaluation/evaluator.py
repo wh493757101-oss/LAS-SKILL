@@ -84,9 +84,8 @@ class CostStats:
     concurrent_throughput: float = 0.0
     concurrency: int = 0
     timing_fetch_avg: float = 0.0
-    timing_upload_avg: float = 0.0
-    timing_las_inference_avg: float = 0.0
-    timing_clip_export_avg: float = 0.0
+    timing_detection_avg: float = 0.0
+    timing_clip_concat_avg: float = 0.0
     total_cost_yuan: float = 0.0
     avg_cost_yuan: float = 0.0
 
@@ -542,7 +541,7 @@ class HighlightEvaluator:
         timing_fetches: list[float] = []
         timing_uploads: list[float] = []
         timing_inferences: list[float] = []
-        timing_exports: list[float] = []
+        timing_concat: list[float] = []
         cost_values: list[float] = []
         for r in results:
             usage = r.get("usage", {})
@@ -561,12 +560,10 @@ class HighlightEvaluator:
             timing = r.get("timing", {})
             if timing.get("fetch", 0) > 0:
                 timing_fetches.append(timing["fetch"])
-            if timing.get("upload", 0) > 0:
-                timing_uploads.append(timing["upload"])
-            if timing.get("las_inference", 0) > 0:
-                timing_inferences.append(timing["las_inference"])
-            if timing.get("clip_export", 0) > 0:
-                timing_exports.append(timing["clip_export"])
+            if timing.get("detection", 0) > 0:
+                timing_inferences.append(timing["detection"])
+            if timing.get("clip_concat", 0) > 0:
+                timing_concat.append(timing["clip_concat"])
             cost = r.get("estimated_cost_yuan", 0.0)
             if cost > 0:
                 cost_values.append(cost)
@@ -595,9 +592,8 @@ class HighlightEvaluator:
             concurrent_throughput=results[0].get("concurrent_throughput", 0.0) if results else 0.0,
             concurrency=results[0].get("concurrency", 0) if results else 0,
             timing_fetch_avg=sum(timing_fetches) / len(timing_fetches) if timing_fetches else 0.0,
-            timing_upload_avg=sum(timing_uploads) / len(timing_uploads) if timing_uploads else 0.0,
-            timing_las_inference_avg=sum(timing_inferences) / len(timing_inferences) if timing_inferences else 0.0,
-            timing_clip_export_avg=sum(timing_exports) / len(timing_exports) if timing_exports else 0.0,
+            timing_detection_avg=sum(timing_inferences) / len(timing_inferences) if timing_inferences else 0.0,
+            timing_clip_concat_avg=sum(timing_concat) / len(timing_concat) if timing_concat else 0.0,
             total_cost_yuan=round(sum(cost_values), 2),
             avg_cost_yuan=round(sum(cost_values) / len(cost_values), 2) if cost_values else 0.0,
         )

@@ -1,4 +1,4 @@
-"""严格端到端验证 — LAS 端到端识别+剪辑 + LLM Judge 全路径，不降级"""
+"""严格端到端验证 — 多模态识别 + FFmpeg 拼接 + LLM Judge 全路径，不降级"""
 import logging
 import os
 import sys
@@ -40,20 +40,48 @@ def main():
     logger.info("duration=%.1fs  fps=%.1f  %dx%d",
                 metadata.duration, metadata.fps, metadata.width, metadata.height)
 
-    # ---- Step 2: VideoEditor — LAS 端到端识别+剪辑，禁用降级 ----
+    # ---- Step 2: HighlightDetector — 多模态识别 ----
+    from src.highlight_detector import DetectorConfig, HighlightDetector
+
+    logger.info("=" * 60)
+    logger.info("Step 2: HighlightDetector — 多模态高光识别")
+    logger.info("=" * 60)
+
+    detector = HighlightDetector(DetectorConfig())
+    detection = detector.detect(metadata, description="测试端到端验证 — 剪辑精彩片段")
+
+    if not detection.segments:
+        strict_fail("多模态识别返回 0 个高光片段")
+
+    logger.info("source=%s segments=%d", detection.source, len(detection.segments))
+    for seg in detection.segments:
+        logger.info("  %.1fs-%.1fs score=%.2f",
+                    seg.start_time, seg.end_time, seg.combined_score)
+
+    # ---- Step 3: VideoEditor — FFmpeg 拼接 ----
     from src.video_editor import EditorConfig, VideoEditor
 
     logger.info("=" * 60)
-    logger.info("Step 2: VideoEditor — LAS 端到端识别+剪辑（禁止降级）")
+    logger.info("Step 3: VideoEditor — FFmpeg 拼接")
     logger.info("=" * 60)
 
     session_dir = str(_project_root() / "output" / "e2e_strict" / "session")
     editor_cfg = EditorConfig(output_dir=session_dir)
     editor = VideoEditor(editor_cfg)
-    edit = editor.edit_e2e(metadata.path, "测试端到端验证 — 剪辑精彩片段")
 
-    if edit.source != "las":
-        strict_fail(f"剪辑源不是 las: {edit.source}")
+    segments = [
+        {
+            "start_time": seg.start_time,
+            "end_time": seg.end_time,
+            "score": seg.combined_score,
+            "label": getattr(seg, "label", ""),
+        }
+        for seg in detection.segments
+    ]
+    edit = editor.edit_with_ffmpeg(metadata.path, segments)
+
+    if edit.source != "multimodal":
+        strict_fail(f"剪辑源不是 multimodal: {edit.source}")
 
     logger.info("source=%s output=%s segments=%d", edit.source, edit.output_path, len(edit.segments))
     for seg in edit.segments:
@@ -62,13 +90,13 @@ def main():
                     seg.get("score", 0), seg.get("label", ""))
 
     if not edit.segments:
-        strict_fail("LAS 端到端返回 0 个高光片段")
+        strict_fail("FFmpeg 拼接返回 0 个高光片段")
 
-    # ---- Step 3: LLMJudge — 视频+音频打分 ----
+    # ---- Step 4: LLMJudge — 视频+音频打分 ----
     from evaluation.llm_judge import LLMJudge, JudgeConfig
 
     logger.info("=" * 60)
-    logger.info("Step 3: LLM Judge — 视频+音频评分")
+    logger.info("Step 4: LLM Judge — 视频+音频评分")
     logger.info("=" * 60)
 
     judge_cfg = JudgeConfig()
@@ -88,15 +116,15 @@ def main():
     if score.error:
         strict_fail(f"LLM Judge 评分失败: {score.error}")
 
-    logger.info("Judge 评分: 节奏感=%.1f 完整性=%.1f 精彩度=%.1f 契合度=%.1f 均分=%.1f",
-                score.rhythm, score.completeness, score.excitement,
-                score.instruction_fit, score.average)
+    logger.info("Judge 评分: 节奏感=%.1f 转场=%.1f 音画=%.1f 完整性=%.1f 契合度=%.1f 均分=%.1f",
+                score.rhythm, score.transition_quality, score.audiovisual_sync,
+                score.completeness, score.instruction_fit, score.average)
     logger.info("总体评价: %s", score.overall_comment)
 
     # ---- Summary ----
     logger.info("=" * 60)
     logger.info("全链路验证通过！")
-    logger.info("  LAS 端到端: las (%d segments)", len(edit.segments))
+    logger.info("  多模态识别: multimodal (%d segments)", len(detection.segments))
     logger.info("  输出: %s", edit.output_path)
     logger.info("  LLM Judge: %.1f/10  (%s)", score.average, score.overall_comment)
     logger.info("=" * 60)

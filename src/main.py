@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .cost_estimator import estimate_ark_cost
+from .highlight_detector import DetectorConfig, HighlightDetector
 from .video_editor import EditResult, EditorConfig, VideoEditor
 from .video_fetcher import (
     LocalFileSource,
@@ -17,23 +19,11 @@ from .video_fetcher import (
 
 logger = logging.getLogger(__name__)
 
-# LAS 计费单价（元/分钟）
-LAS_PRICE_PER_MINUTE = {
-    "simple": 1.5,
-    "detail": 2.0,
-}
-
-
-def estimate_las_cost(duration_seconds: float, mode: str = "detail") -> float:
-    """预估 LAS 剪辑费用（元）。"""
-    minutes = duration_seconds / 60.0
-    rate = LAS_PRICE_PER_MINUTE.get(mode, LAS_PRICE_PER_MINUTE["detail"])
-    return round(minutes * rate, 4)
-
 
 @dataclass
 class PipelineConfig:
     editor: EditorConfig = field(default_factory=EditorConfig)
+    detector: DetectorConfig = field(default_factory=DetectorConfig)
     output_dir: str = ""
 
 
@@ -41,16 +31,14 @@ class PipelineConfig:
 class PipelineTiming:
     """各阶段耗时（秒），-1 表示未执行该阶段。"""
     fetch: float = 0.0
-    upload: float = 0.0
-    las_inference: float = 0.0
-    clip_export: float = 0.0
+    detection: float = 0.0
+    clip_concat: float = 0.0
 
     def to_dict(self) -> dict[str, float]:
         return {
             "fetch": round(self.fetch, 2),
-            "upload": round(self.upload, 2),
-            "las_inference": round(self.las_inference, 2),
-            "clip_export": round(self.clip_export, 2),
+            "detection": round(self.detection, 2),
+            "clip_concat": round(self.clip_concat, 2),
         }
 
 
@@ -70,6 +58,7 @@ class VideoHighlightPipeline:
         self.config = config or PipelineConfig()
         self._fetcher: VideoFetcher | None = None
         self._editor: VideoEditor | None = None
+        self._detector: HighlightDetector | None = None
 
     @property
     def fetcher(self) -> VideoFetcher:
@@ -83,15 +72,20 @@ class VideoHighlightPipeline:
             self._editor = VideoEditor(self.config.editor)
         return self._editor
 
+    @property
+    def detector(self) -> HighlightDetector:
+        if self._detector is None:
+            self._detector = HighlightDetector(self.config.detector)
+        return self._detector
+
     def run(
         self,
         source: VideoSource,
         description: str = "",
-        asr_text: str = "",
         skip_edit: bool = False,
     ) -> PipelineResult:
         try:
-            return self._run_impl(source, description, asr_text, skip_edit)
+            return self._run_impl(source, description, skip_edit)
         except Exception as e:
             logger.error("Pipeline 执行失败: %s", e, exc_info=True)
             return PipelineResult(
@@ -112,7 +106,6 @@ class VideoHighlightPipeline:
         self,
         source: VideoSource,
         description: str = "",
-        asr_text: str = "",
         skip_edit: bool = False,
     ) -> PipelineResult:
         t_start = time.time()
@@ -132,20 +125,32 @@ class VideoHighlightPipeline:
             )
 
         self.config.editor.output_dir = session_dir
-        t1 = time.time()
-        edit = self.editor.edit_e2e(metadata.path, description)
-        t_edit = time.time() - t1
-        estimated_cost = estimate_las_cost(metadata.duration, self.config.editor.las_mode)
-        logger.info("LAS 端到端剪辑完成: source=%s, output=%s, segments=%d",
-                    edit.source, edit.output_path, len(edit.segments))
 
-        self._upload_result_to_tos(edit.session_tos_path, metadata, edit)
+        t1 = time.time()
+        detection_result = self.detector.detect(metadata, description)
+        t_detect = time.time() - t1
+        logger.info("多模态高光检测完成: source=%s, segments=%d",
+                    detection_result.source, len(detection_result.segments))
+
+        segments = [
+            {
+                "start_time": seg.start_time,
+                "end_time": seg.end_time,
+                "score": seg.combined_score,
+                "label": getattr(seg, "label", ""),
+            }
+            for seg in detection_result.segments
+        ]
+        edit = self.editor.edit_with_ffmpeg(metadata.path, segments)
+        logger.info("FFmpeg 拼接完成: output=%s, segments=%d",
+                    edit.output_path, len(edit.segments))
+
+        estimated_cost = estimate_ark_cost(metadata.duration, self.config.detector.ark_model)
 
         timing = PipelineTiming(
             fetch=t_fetch,
-            upload=edit.timing.upload if edit.timing else -1,
-            las_inference=edit.timing.las_inference if edit.timing else -1,
-            clip_export=edit.timing.clip_export if edit.timing else -1,
+            detection=t_detect,
+            clip_concat=edit.timing.ffmpeg_concat if edit.timing else -1,
         )
 
         return PipelineResult(
@@ -155,52 +160,29 @@ class VideoHighlightPipeline:
             estimated_cost_yuan=estimated_cost,
         )
 
-    def _upload_result_to_tos(self, tos_dir: str, metadata: VideoMetadata, edit: EditResult) -> None:
-        import os as _os
-        import tos as _tos
-
-        _ak = _os.environ.get("TOS_ACCESS_KEY", "")
-        _sk = _os.environ.get("TOS_SECRET_KEY", "")
-        if not _ak or not _sk or not tos_dir:
-            return
-
-        try:
-            _client = _tos.TosClientV2(_ak, _sk, "tos-cn-guangzhou.volces.com", "cn-guangzhou")
-            _bucket = "arkclaw-tos-2124145136-cn-guangzhou"
-
-            result_json = self.export_json(PipelineResult(metadata=metadata, edit=edit))
-            _key = tos_dir.replace("tos://" + _bucket + "/", "") + "result.json"
-            _client.put_object(_bucket, _key, result_json.encode("utf-8"))
-            logger.info("result.json 已上传到 TOS: tos://%s/%s", _bucket, _key)
-        except Exception as e:
-            logger.warning("TOS 上传 result.json 失败: %s", e)
-
     def run_from_path(
         self,
         video_path: str,
         description: str = "",
-        asr_text: str = "",
         skip_edit: bool = False,
     ) -> PipelineResult:
-        return self.run(LocalFileSource(video_path), description, asr_text, skip_edit)
+        return self.run(LocalFileSource(video_path), description, skip_edit)
 
     def run_from_url(
         self,
         url: str,
         description: str = "",
-        asr_text: str = "",
         skip_edit: bool = False,
     ) -> PipelineResult:
-        return self.run(UrlSource(url), description, asr_text, skip_edit)
+        return self.run(UrlSource(url), description, skip_edit)
 
     def run_from_tos(
         self,
         tos_path: str,
         description: str = "",
-        asr_text: str = "",
         skip_edit: bool = False,
     ) -> PipelineResult:
-        return self.run(TosSource(tos_path), description, asr_text, skip_edit)
+        return self.run(TosSource(tos_path), description, skip_edit)
 
     def format_result(self, result: PipelineResult) -> str:
         lines: list[str] = []
@@ -220,7 +202,7 @@ class VideoHighlightPipeline:
 
         if result.edit:
             lines.append("\n[高光片段]")
-            lines.append(f"  剪辑方式: {result.edit.source}")
+            lines.append(f"  识别方式: {result.edit.source}")
             lines.append(f"  片段数: {len(result.edit.segments)}")
             for i, seg in enumerate(result.edit.segments):
                 lines.append(
@@ -231,7 +213,7 @@ class VideoHighlightPipeline:
             lines.append(f"  输出路径: {result.edit.output_path}")
 
         if result.estimated_cost_yuan > 0:
-            lines.append(f"\n[预估费用] ¥{result.estimated_cost_yuan:.2f}")
+            lines.append(f"\n[预估费用] ¥{result.estimated_cost_yuan:.4f}")
 
         if result.error:
             lines.append(f"\n[警告] {result.error}")
@@ -255,7 +237,6 @@ class VideoHighlightPipeline:
                 "source": result.edit.source,
                 "output_path": result.edit.output_path,
                 "segments": result.edit.segments,
-                "session_tos_path": result.edit.session_tos_path,
             }
 
         if result.estimated_cost_yuan > 0:

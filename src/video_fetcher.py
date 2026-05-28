@@ -161,8 +161,7 @@ class TosSource:
 class ArkFileSource:
     """通过 Ark Files API 上传本地文件并获取 HTTPS 预签名下载链接。
 
-    只需 ARK_API_KEY，无需 TOS 凭证。返回的 download_url 24 小时有效，
-    可直接作为 LAS las_video_edit 算子的输入 URL。
+    只需 ARK_API_KEY，无需 TOS 凭证。返回的 download_url 24 小时有效。
     """
 
     def __init__(self, path: str):
