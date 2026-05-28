@@ -9,6 +9,9 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+# 多 IoU 阈值列表，对标 QVHighlights 标准
+MULTI_IOU_THRESHOLDS = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
+
 
 def parse_target_duration(text: str) -> float | None:
     """从指令文本中提取目标时长（秒），无明确时长返回 None。"""
@@ -56,6 +59,11 @@ class CaseScore:
     segment_count_deviation: float = 0.0
     total_duration_ratio: float = 0.0
     instruction_duration_fit: float = 1.0
+    map_50: float = 0.0
+    map_75: float = 0.0
+    avg_map: float = 0.0
+    kendall_tau: float | None = None
+    spearman_rho: float | None = None
     error: str | None = None
 
 
@@ -75,6 +83,12 @@ class CostStats:
     memory_avg_mb: float = 0.0
     concurrent_throughput: float = 0.0
     concurrency: int = 0
+    timing_fetch_avg: float = 0.0
+    timing_upload_avg: float = 0.0
+    timing_las_inference_avg: float = 0.0
+    timing_clip_export_avg: float = 0.0
+    total_cost_yuan: float = 0.0
+    avg_cost_yuan: float = 0.0
 
 
 @dataclass
@@ -99,6 +113,11 @@ class EvalReport:
     overall_segment_count_deviation: float = 0.0
     overall_total_duration_ratio: float = 0.0
     overall_instruction_duration_fit: float = 1.0
+    overall_map_50: float = 0.0
+    overall_map_75: float = 0.0
+    overall_avg_map: float = 0.0
+    overall_kendall_tau: float | None = None
+    overall_spearman_rho: float | None = None
     cost: CostStats = field(default_factory=CostStats)
     by_category: dict[str, dict[str, Any]] = field(default_factory=dict)
     by_difficulty: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -185,6 +204,96 @@ class HighlightEvaluator:
                     break
         return hits / min(k, len(predicted))
 
+    def compute_map_at_threshold(
+        self,
+        predicted: list[dict[str, Any]],
+        ground_truth: list[dict[str, Any]],
+        iou_threshold: float,
+    ) -> float:
+        """计算单个 IoU 阈值下的 Average Precision。
+
+        对每个预测片段，检查是否与任一 GT 片段 IoU ≥ threshold，
+        然后计算 Precision@K 的均值作为 AP。
+        """
+        if not ground_truth or not predicted:
+            return 0.0
+
+        gt_used: set[int] = set()
+        hits = 0
+        precisions: list[float] = []
+
+        for k, pred in enumerate(predicted, 1):
+            best_iou = 0.0
+            best_gt_idx = -1
+            for j, gt in enumerate(ground_truth):
+                if j in gt_used:
+                    continue
+                iou = self.compute_iou(
+                    pred["start_time"], pred["end_time"],
+                    gt["start_time"], gt["end_time"],
+                )
+                if iou > best_iou:
+                    best_iou = iou
+                    best_gt_idx = j
+
+            if best_iou >= iou_threshold and best_gt_idx >= 0:
+                gt_used.add(best_gt_idx)
+                hits += 1
+
+            precisions.append(hits / k)
+
+        return sum(precisions) / len(precisions) if precisions else 0.0
+
+    def compute_multi_iou_map(
+        self,
+        predicted: list[dict[str, Any]],
+        ground_truth: list[dict[str, Any]],
+    ) -> tuple[float, float, float]:
+        """计算多 IoU 阈值 mAP：mAP@0.5, mAP@0.75, Avg mAP [0.5:0.05:0.95]."""
+        map_50 = self.compute_map_at_threshold(predicted, ground_truth, 0.5)
+        map_75 = self.compute_map_at_threshold(predicted, ground_truth, 0.75)
+        avg_maps = [
+            self.compute_map_at_threshold(predicted, ground_truth, t)
+            for t in MULTI_IOU_THRESHOLDS
+        ]
+        avg_map = sum(avg_maps) / len(avg_maps) if avg_maps else 0.0
+        return map_50, map_75, avg_map
+
+    def compute_rank_correlation(
+        self,
+        predicted: list[dict[str, Any]],
+        ground_truth: list[dict[str, Any]],
+    ) -> tuple[float | None, float | None]:
+        """计算 Kendall's τ 和 Spearman's ρ 排序相关性。
+
+        将预测片段和 GT 片段按时序对齐，比较 score 排序。
+        若预测和 GT 片段数不同，按最小数量截断。
+        需要 segments 包含 score 字段。
+        """
+        pred_scores = [s.get("score", 0.0) for s in predicted]
+        gt_scores = [s.get("score", 0.0) for s in ground_truth]
+
+        n = min(len(pred_scores), len(gt_scores))
+        if n < 2:
+            return None, None
+
+        pred_scores = pred_scores[:n]
+        gt_scores = gt_scores[:n]
+
+        try:
+            from scipy import stats as scipy_stats
+            import math
+
+            tau, _ = scipy_stats.kendalltau(pred_scores, gt_scores)
+            rho, _ = scipy_stats.spearmanr(pred_scores, gt_scores)
+
+            tau_val = float(tau) if tau is not None and not math.isnan(tau) else None
+            rho_val = float(rho) if rho is not None and not math.isnan(rho) else None
+            return tau_val, rho_val
+        except ImportError:
+            logger.warning("scipy 未安装，跳过排序相关性计算")
+            return None, None
+
     def classify_iou(self, iou: float) -> str:
         if iou >= 0.8:
             return "excellent"
@@ -256,6 +365,12 @@ class HighlightEvaluator:
             deviation = abs(total_pred_duration - target_duration) / target_duration
             instruction_duration_fit = max(0.0, 1.0 - deviation)
 
+        # 多 IoU 阈值 mAP
+        map_50, map_75, avg_map = self.compute_multi_iou_map(predicted, ground_truth)
+
+        # 排序相关性
+        kendall_tau, spearman_rho = self.compute_rank_correlation(predicted, ground_truth)
+
         return CaseScore(
             case_id=case_id,
             category=category,
@@ -273,6 +388,11 @@ class HighlightEvaluator:
             segment_count_deviation=segment_count_deviation,
             total_duration_ratio=total_duration_ratio,
             instruction_duration_fit=instruction_duration_fit,
+            map_50=map_50,
+            map_75=map_75,
+            avg_map=avg_map,
+            kendall_tau=kendall_tau,
+            spearman_rho=spearman_rho,
         )
 
     def evaluate_all(self, results: list[dict[str, Any]]) -> EvalReport:
@@ -292,6 +412,11 @@ class HighlightEvaluator:
         total_seg_dev = 0.0
         total_dur_ratio = 0.0
         total_inst_fit = 0.0
+        total_map_50 = 0.0
+        total_map_75 = 0.0
+        total_avg_map = 0.0
+        tau_values: list[float] = []
+        rho_values: list[float] = []
 
         # 微平均：所有 case 的 hit_count 总和 / predicted 总和
         micro_hit_count = 0
@@ -338,6 +463,13 @@ class HighlightEvaluator:
             total_seg_dev += score.segment_count_deviation
             total_dur_ratio += score.total_duration_ratio
             total_inst_fit += score.instruction_duration_fit
+            total_map_50 += score.map_50
+            total_map_75 += score.map_75
+            total_avg_map += score.avg_map
+            if score.kendall_tau is not None:
+                tau_values.append(score.kendall_tau)
+            if score.spearman_rho is not None:
+                rho_values.append(score.spearman_rho)
 
             # 微平均统计
             hit_count = sum(1 for m in score.matched_pairs if m.hit)
@@ -372,6 +504,11 @@ class HighlightEvaluator:
         report.overall_segment_count_deviation = total_seg_dev / n
         report.overall_total_duration_ratio = total_dur_ratio / n
         report.overall_instruction_duration_fit = total_inst_fit / n
+        report.overall_map_50 = total_map_50 / n
+        report.overall_map_75 = total_map_75 / n
+        report.overall_avg_map = total_avg_map / n
+        report.overall_kendall_tau = sum(tau_values) / len(tau_values) if tau_values else None
+        report.overall_spearman_rho = sum(rho_values) / len(rho_values) if rho_values else None
 
         report.exception_count = len([s for s in report.scores if s.error])
         report.total_count = len(report.scores)
@@ -402,6 +539,11 @@ class HighlightEvaluator:
         api_retries = 0
         memory_peaks: list[float] = []
         memory_avgs: list[float] = []
+        timing_fetches: list[float] = []
+        timing_uploads: list[float] = []
+        timing_inferences: list[float] = []
+        timing_exports: list[float] = []
+        cost_values: list[float] = []
         for r in results:
             usage = r.get("usage", {})
             total_prompt += usage.get("prompt_tokens", 0)
@@ -416,6 +558,18 @@ class HighlightEvaluator:
                 memory_peaks.append(mem_peak)
             if mem_avg > 0:
                 memory_avgs.append(mem_avg)
+            timing = r.get("timing", {})
+            if timing.get("fetch", 0) > 0:
+                timing_fetches.append(timing["fetch"])
+            if timing.get("upload", 0) > 0:
+                timing_uploads.append(timing["upload"])
+            if timing.get("las_inference", 0) > 0:
+                timing_inferences.append(timing["las_inference"])
+            if timing.get("clip_export", 0) > 0:
+                timing_exports.append(timing["clip_export"])
+            cost = r.get("estimated_cost_yuan", 0.0)
+            if cost > 0:
+                cost_values.append(cost)
 
         total_tokens = total_prompt + total_completion
         tokens_per_minute = total_tokens / (total_duration / 60.0) if total_duration > 0 else 0.0
@@ -440,6 +594,12 @@ class HighlightEvaluator:
             memory_avg_mb=memory_avg_mb,
             concurrent_throughput=results[0].get("concurrent_throughput", 0.0) if results else 0.0,
             concurrency=results[0].get("concurrency", 0) if results else 0,
+            timing_fetch_avg=sum(timing_fetches) / len(timing_fetches) if timing_fetches else 0.0,
+            timing_upload_avg=sum(timing_uploads) / len(timing_uploads) if timing_uploads else 0.0,
+            timing_las_inference_avg=sum(timing_inferences) / len(timing_inferences) if timing_inferences else 0.0,
+            timing_clip_export_avg=sum(timing_exports) / len(timing_exports) if timing_exports else 0.0,
+            total_cost_yuan=round(sum(cost_values), 2),
+            avg_cost_yuan=round(sum(cost_values) / len(cost_values), 2) if cost_values else 0.0,
         )
 
 
@@ -451,12 +611,23 @@ def compute_weighted_score(
 ) -> dict[str, Any]:
     eval_score = eval_report.overall_f1
     judge_normalized = 0.0
+    segment_normalized = 0.0
+    video_normalized = 0.0
     degraded = getattr(judge_report, "degraded", False)
+    segment_degraded = getattr(judge_report, "segment_degraded", True)
+    video_degraded = getattr(judge_report, "video_degraded", True)
 
-    if not degraded and hasattr(judge_report, "overall_average") and judge_report.overall_average > 0:
+    if not segment_degraded and hasattr(judge_report, "segment_average") and judge_report.segment_average > 0:
+        segment_normalized = judge_report.segment_average / 10.0
+    if not video_degraded and hasattr(judge_report, "video_average") and judge_report.video_average > 0:
+        video_normalized = judge_report.video_average / 10.0
+
+    if not segment_degraded or not video_degraded:
+        judge_normalized = (segment_normalized + video_normalized) / 2.0
+    elif not degraded and hasattr(judge_report, "overall_average") and judge_report.overall_average > 0:
         judge_normalized = judge_report.overall_average / 10.0
 
-    if degraded:
+    if degraded and segment_degraded and video_degraded:
         weighted = eval_score
     else:
         weighted = eval_score * weight_eval + judge_normalized * weight_judge
@@ -464,6 +635,8 @@ def compute_weighted_score(
     return {
         "eval_score": round(eval_score, 4),
         "judge_score": round(judge_normalized, 4),
+        "segment_judge_score": round(segment_normalized, 4),
+        "video_judge_score": round(video_normalized, 4),
         "weighted_score": round(weighted, 4),
         "degraded": degraded,
     }

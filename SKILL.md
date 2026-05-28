@@ -123,8 +123,11 @@ Pipeline 采用"快速失败"策略：LAS 不可用时直接返回错误（`Pipe
 
 ## 评测体系
 
-- **量化评测** (`evaluator.py`) — 基于 tIoU 的片段匹配，Precision/Recall/F1/Hit Rate/MAE
-- **LLM Judge** (`llm_judge.py`) — 多维度主观评分（节奏感、完整性、精彩度、指令契合度）
+三层架构：**tIoU 量化评测（50%）→ 双 LLM Judge（50%）→ 加权融合**
+
+- **量化评测** (`evaluator.py`) — tIoU 片段匹配，Precision/Recall/F1/Hit Rate/MAE/mAP/Kendall's τ
+- **Segment Judge** (`llm_judge.py`) — 逐片段评测：内容完整性、片段质量、指令契合度（权重 25%）
+- **Video Judge** (`llm_judge.py`) — 集锦整体评测：节奏感、转场质量、音画同步、内容完整性、指令契合度（权重 25%）
 - **评测编排** (`runner.py`) — 自动加载用例 → 运行 Pipeline → 并行评测
 - **报告生成** (`report.py`) — 文本报告 + JSON 导出 + 可视化图表
 

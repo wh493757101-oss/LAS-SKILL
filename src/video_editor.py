@@ -20,11 +20,20 @@ class EditorConfig:
 
 
 @dataclass
+class EditTiming:
+    """LAS 剪辑各阶段耗时（秒）。"""
+    upload: float = 0.0
+    las_inference: float = 0.0
+    clip_export: float = 0.0
+
+
+@dataclass
 class EditResult:
     output_path: str
     segments: list[dict[str, Any]] = field(default_factory=list)
     source: str = "las"
     session_tos_path: str = ""
+    timing: EditTiming = field(default_factory=EditTiming)
 
 
 class VideoEditor:
@@ -55,7 +64,9 @@ class VideoEditor:
         video_path: str,
         description: str,
     ) -> EditResult:
+        t_upload_start = time.time()
         video_url = self._resolve_video_url(video_path)
+        t_upload = time.time() - t_upload_start
 
         base_tos = self.config.output_tos_path or os.environ.get("TOS_OUTPUT_PATH", "")
         session_name = Path(video_path).stem + "_" + time.strftime("%Y%m%d_%H%M%S")
@@ -69,6 +80,7 @@ class VideoEditor:
 
         logger.info("LAS e2e submit: operator=%s mode=%s", self.config.las_operator_id, self.config.las_mode)
 
+        t_infer_start = time.time()
         result = self.las_client.submit(
             self.config.las_operator_id,
             task_input,
@@ -79,6 +91,9 @@ class VideoEditor:
             raise RuntimeError("LAS 未返回 task_id")
 
         final = self.las_client.wait_for_completion(task_id)
+        t_inference = time.time() - t_infer_start
+
+        t_export_start = time.time()
         data = final.get("data", {})
         clips = data.get("clips", [])
 
@@ -99,16 +114,20 @@ class VideoEditor:
                 "end_time": end_sec,
                 "score": c.get("confidence", 0.5),
                 "label": c.get("description", ""),
+                "clip_url": c.get("clip_url", ""),
             })
 
         if not output_url:
             output_url = final.get("output", {}).get("url", "")
+
+        t_export = time.time() - t_export_start
 
         return EditResult(
             output_path=output_url,
             segments=segments,
             source="las",
             session_tos_path=output_tos_path,
+            timing=EditTiming(upload=t_upload, las_inference=t_inference, clip_export=t_export),
         )
 
     def _resolve_video_url(self, video_path: str) -> str:

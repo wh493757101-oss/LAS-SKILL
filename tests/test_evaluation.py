@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from evaluation.evaluator import (
+    MULTI_IOU_THRESHOLDS,
     CaseScore,
     CostStats,
     EvalReport,
@@ -17,6 +18,8 @@ from evaluation.llm_judge import (
     JudgeReport,
     JudgeScore,
     LLMJudge,
+    SegmentJudgeScore,
+    VideoJudgeScore,
     format_judge_report,
 )
 from evaluation.report import ReportConfig, ReportGenerator
@@ -100,6 +103,11 @@ class TestHighlightEvaluator:
         assert score.segment_count_deviation == 0.0
         assert score.total_duration_ratio == pytest.approx(5.0 / 60.0)
         assert score.instruction_duration_fit == 1.0
+        assert score.map_50 == 1.0
+        assert score.map_75 == 1.0
+        assert score.avg_map == 1.0
+        assert score.kendall_tau is None
+        assert score.spearman_rho is None
         assert score.error is None
 
     def test_score_case_empty_gt(self):
@@ -144,6 +152,9 @@ class TestHighlightEvaluator:
         assert report.overall_hit_rate_3 == 1.0
         assert report.overall_mae == 0.0
         assert report.overall_segment_count_deviation == 0.0
+        assert report.overall_map_50 == 1.0
+        assert report.overall_map_75 == 1.0
+        assert report.overall_avg_map == 1.0
         assert report.iou_distribution["excellent"] == 2
         assert report.exception_rate == 0.0
         assert len(report.scores) == 2
@@ -255,6 +266,110 @@ class TestParseTargetDuration:
         assert parse_target_duration("") is None
 
 
+class TestMultiIoUMap:
+    def test_compute_map_perfect_match(self):
+        evaluator = HighlightEvaluator()
+        predicted = [{"start_time": 0.0, "end_time": 5.0}]
+        ground_truth = [{"start_time": 0.0, "end_time": 5.0}]
+        map_50, map_75, avg_map = evaluator.compute_multi_iou_map(predicted, ground_truth)
+        assert map_50 == 1.0
+        assert map_75 == 1.0
+        assert avg_map == 1.0
+
+    def test_compute_map_no_match(self):
+        evaluator = HighlightEvaluator()
+        predicted = [{"start_time": 0.0, "end_time": 2.0}]
+        ground_truth = [{"start_time": 5.0, "end_time": 7.0}]
+        map_50, map_75, avg_map = evaluator.compute_multi_iou_map(predicted, ground_truth)
+        assert map_50 == 0.0
+        assert map_75 == 0.0
+        assert avg_map == 0.0
+
+    def test_compute_map_partial(self):
+        evaluator = HighlightEvaluator()
+        predicted = [
+            {"start_time": 0.0, "end_time": 5.0},
+            {"start_time": 10.0, "end_time": 15.0},
+        ]
+        ground_truth = [
+            {"start_time": 0.0, "end_time": 5.0},
+            {"start_time": 50.0, "end_time": 55.0},
+        ]
+        map_50, map_75, avg_map = evaluator.compute_multi_iou_map(predicted, ground_truth)
+        assert map_50 == 0.75  # 第1个命中，第2个未命中 → AP = (1/1 + 1/2)/2
+        assert map_75 == 0.75
+        assert 0.0 < avg_map < 1.0
+
+    def test_compute_map_empty(self):
+        evaluator = HighlightEvaluator()
+        assert evaluator.compute_multi_iou_map([], []) == (0.0, 0.0, 0.0)
+        assert evaluator.compute_multi_iou_map(
+            [{"start_time": 0, "end_time": 5}], [],
+        ) == (0.0, 0.0, 0.0)
+
+    def test_multi_iou_thresholds_range(self):
+        assert MULTI_IOU_THRESHOLDS[0] == 0.5
+        assert MULTI_IOU_THRESHOLDS[-1] == 0.95
+        assert len(MULTI_IOU_THRESHOLDS) == 10
+
+
+class TestRankCorrelation:
+    def test_rank_correlation_perfect(self):
+        evaluator = HighlightEvaluator()
+        predicted = [
+            {"start_time": 0.0, "end_time": 2.0, "score": 0.1},
+            {"start_time": 3.0, "end_time": 5.0, "score": 0.9},
+            {"start_time": 6.0, "end_time": 8.0, "score": 0.5},
+        ]
+        ground_truth = [
+            {"start_time": 0.0, "end_time": 2.0, "score": 0.1},
+            {"start_time": 3.0, "end_time": 5.0, "score": 0.9},
+            {"start_time": 6.0, "end_time": 8.0, "score": 0.5},
+        ]
+        tau, rho = evaluator.compute_rank_correlation(predicted, ground_truth)
+        assert tau == 1.0
+        assert rho == 1.0
+
+    def test_rank_correlation_insufficient_data(self):
+        evaluator = HighlightEvaluator()
+        predicted = [{"start_time": 0.0, "end_time": 2.0, "score": 0.5}]
+        ground_truth = [{"start_time": 0.0, "end_time": 2.0, "score": 0.5}]
+        tau, rho = evaluator.compute_rank_correlation(predicted, ground_truth)
+        assert tau is None
+        assert rho is None
+
+    def test_rank_correlation_no_scores(self):
+        evaluator = HighlightEvaluator()
+        predicted = [
+            {"start_time": 0.0, "end_time": 2.0},
+            {"start_time": 3.0, "end_time": 5.0},
+            {"start_time": 6.0, "end_time": 8.0},
+        ]
+        ground_truth = [
+            {"start_time": 0.0, "end_time": 2.0},
+            {"start_time": 3.0, "end_time": 5.0},
+            {"start_time": 6.0, "end_time": 8.0},
+        ]
+        tau, rho = evaluator.compute_rank_correlation(predicted, ground_truth)
+        assert tau is None
+        assert rho is None
+
+    def test_rank_correlation_mismatched_lengths(self):
+        evaluator = HighlightEvaluator()
+        predicted = [
+            {"start_time": 0.0, "end_time": 2.0, "score": 0.3},
+            {"start_time": 3.0, "end_time": 5.0, "score": 0.7},
+            {"start_time": 6.0, "end_time": 8.0, "score": 0.5},
+        ]
+        ground_truth = [
+            {"start_time": 0.0, "end_time": 2.0, "score": 0.3},
+            {"start_time": 3.0, "end_time": 5.0, "score": 0.7},
+        ]
+        tau, rho = evaluator.compute_rank_correlation(predicted, ground_truth)
+        assert tau == 1.0
+        assert rho == pytest.approx(1.0)
+
+
 class TestLLMJudge:
     def test_build_prompt(self):
         judge = LLMJudge()
@@ -277,7 +392,7 @@ class TestLLMJudge:
         assert "无特定要求" in prompt
 
     def test_judge_score_average(self):
-        score = JudgeScore(rhythm=4.0, completeness=3.0, excitement=5.0, instruction_fit=4.0)
+        score = JudgeScore(rhythm=4.0, transition_quality=3.0, audiovisual_sync=5.0, completeness=4.0, instruction_fit=4.0)
         assert score.average == 4.0
 
     def test_judge_score_error(self):
@@ -289,25 +404,47 @@ class TestLLMJudge:
         judge = LLMJudge()
         report = judge.judge_all([])
         assert report.overall_average == 0.0
+        assert report.segment_average == 0.0
+        assert report.video_average == 0.0
 
     def test_format_judge_report(self):
         report = JudgeReport(
             scores=[
-                JudgeScore(rhythm=4.0, completeness=4.0, excitement=5.0, instruction_fit=4.0, overall_comment="剪辑质量优秀"),
+                JudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, completeness=4.0, instruction_fit=4.0, overall_comment="剪辑质量优秀"),
+            ],
+            segment_scores=[
+                SegmentJudgeScore(content_completeness=4.0, segment_quality=5.0, instruction_fit=4.0, overall_comment="片段质量不错"),
+            ],
+            video_scores=[
+                VideoJudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, content_completeness=4.0, instruction_fit=4.0, overall_comment="剪辑质量优秀"),
             ],
             overall_rhythm=4.0,
+            overall_transition_quality=4.0,
+            overall_audiovisual_sync=4.0,
             overall_completeness=4.0,
-            overall_excitement=5.0,
             overall_instruction_fit=4.0,
-            overall_average=4.25,
+            overall_average=4.0,
+            segment_content_completeness=4.0,
+            segment_quality=5.0,
+            segment_instruction_fit=4.0,
+            segment_average=4.33,
+            video_rhythm=4.0,
+            video_transition_quality=4.0,
+            video_audiovisual_sync=4.0,
+            video_content_completeness=4.0,
+            video_instruction_fit=4.0,
+            video_average=4.0,
         )
         formatted = format_judge_report(report)
-        assert "4.00 / 10.0" in formatted
+        assert "Segment Judge" in formatted
+        assert "Video Judge" in formatted
         assert "剪辑质量优秀" in formatted
 
     def test_format_judge_report_with_error(self):
         report = JudgeReport(
             scores=[JudgeScore(error="API 不可用")],
+            segment_scores=[SegmentJudgeScore(error="API 不可用")],
+            video_scores=[VideoJudgeScore(error="API 不可用")],
         )
         formatted = format_judge_report(report)
         assert "[ERROR]" in formatted
@@ -330,13 +467,30 @@ class TestReportGenerator:
 
         judge_report = JudgeReport(
             scores=[
-                JudgeScore(rhythm=4.0, completeness=4.0, excitement=5.0, instruction_fit=4.0, overall_comment="不错"),
+                JudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, completeness=4.0, instruction_fit=4.0, overall_comment="不错"),
+            ],
+            segment_scores=[
+                SegmentJudgeScore(content_completeness=4.0, segment_quality=5.0, instruction_fit=4.0, overall_comment="片段不错"),
+            ],
+            video_scores=[
+                VideoJudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, content_completeness=4.0, instruction_fit=4.0, overall_comment="集锦不错"),
             ],
             overall_rhythm=4.0,
+            overall_transition_quality=4.0,
+            overall_audiovisual_sync=4.0,
             overall_completeness=4.0,
-            overall_excitement=5.0,
             overall_instruction_fit=4.0,
-            overall_average=4.25,
+            overall_average=4.0,
+            segment_content_completeness=4.0,
+            segment_quality=5.0,
+            segment_instruction_fit=4.0,
+            segment_average=4.33,
+            video_rhythm=4.0,
+            video_transition_quality=4.0,
+            video_audiovisual_sync=4.0,
+            video_content_completeness=4.0,
+            video_instruction_fit=4.0,
+            video_average=4.0,
         )
 
         gen = ReportGenerator(ReportConfig(output_dir=str(tmp_path), save_charts=False))
@@ -344,7 +498,8 @@ class TestReportGenerator:
 
         assert "视频高光剪辑" in text
         assert "case_001" in text
-        assert "4.25" in text
+        assert "Segment Judge" in text
+        assert "Video Judge" in text
         assert "不错" in text
 
     def test_generate_json_report(self, tmp_path):
@@ -361,12 +516,29 @@ class TestReportGenerator:
         ])
 
         judge_report = JudgeReport(
-            scores=[JudgeScore(rhythm=4.0, completeness=4.0, excitement=5.0, instruction_fit=4.0, overall_comment="不错")],
+            scores=[JudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, completeness=4.0, instruction_fit=4.0, overall_comment="不错")],
+            segment_scores=[
+                SegmentJudgeScore(content_completeness=4.0, segment_quality=5.0, instruction_fit=4.0, overall_comment="片段不错"),
+            ],
+            video_scores=[
+                VideoJudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, content_completeness=4.0, instruction_fit=4.0, overall_comment="集锦不错"),
+            ],
             overall_rhythm=4.0,
+            overall_transition_quality=4.0,
+            overall_audiovisual_sync=4.0,
             overall_completeness=4.0,
-            overall_excitement=5.0,
             overall_instruction_fit=4.0,
-            overall_average=4.25,
+            overall_average=4.0,
+            segment_content_completeness=4.0,
+            segment_quality=5.0,
+            segment_instruction_fit=4.0,
+            segment_average=4.33,
+            video_rhythm=4.0,
+            video_transition_quality=4.0,
+            video_audiovisual_sync=4.0,
+            video_content_completeness=4.0,
+            video_instruction_fit=4.0,
+            video_average=4.0,
         )
 
         gen = ReportGenerator(ReportConfig(output_dir=str(tmp_path), save_charts=False))
@@ -376,7 +548,9 @@ class TestReportGenerator:
         assert json_path.exists()
         data = json.loads(json_path.read_text(encoding="utf-8"))
         assert data["iou_eval"]["overall_f1"] == 1.0
-        assert data["llm_judge"]["overall_average"] == 4.25
+        assert data["segment_judge"]["average"] == 4.33
+        assert data["video_judge"]["average"] == 4.0
+        assert data["llm_judge"]["overall_average"] == 4.0
 
     def test_generate_charts(self, tmp_path):
         evaluator = HighlightEvaluator()
@@ -392,12 +566,25 @@ class TestReportGenerator:
         ])
 
         judge_report = JudgeReport(
-            scores=[JudgeScore(rhythm=4.0, completeness=4.0, excitement=5.0, instruction_fit=4.0, overall_comment="不错")],
+            scores=[JudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, completeness=4.0, instruction_fit=4.0, overall_comment="不错")],
+            segment_scores=[
+                SegmentJudgeScore(content_completeness=4.0, segment_quality=5.0, instruction_fit=4.0, overall_comment="片段不错"),
+            ],
+            video_scores=[
+                VideoJudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, content_completeness=4.0, instruction_fit=4.0, overall_comment="集锦不错"),
+            ],
             overall_rhythm=4.0,
+            overall_transition_quality=4.0,
+            overall_audiovisual_sync=4.0,
             overall_completeness=4.0,
-            overall_excitement=5.0,
             overall_instruction_fit=4.0,
-            overall_average=4.25,
+            overall_average=4.0,
+            video_rhythm=4.0,
+            video_transition_quality=4.0,
+            video_audiovisual_sync=4.0,
+            video_content_completeness=4.0,
+            video_instruction_fit=4.0,
+            video_average=4.0,
         )
 
         gen = ReportGenerator(ReportConfig(output_dir=str(tmp_path), save_charts=True))
@@ -641,17 +828,36 @@ class TestWeightedScore:
             },
         ])
         judge_report = JudgeReport(
-            scores=[JudgeScore(rhythm=4.0, completeness=4.0, excitement=4.0, instruction_fit=4.0)],
+            scores=[JudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, completeness=4.0, instruction_fit=4.0)],
+            segment_scores=[
+                SegmentJudgeScore(content_completeness=4.0, segment_quality=4.0, instruction_fit=4.0),
+            ],
+            video_scores=[
+                VideoJudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, content_completeness=4.0, instruction_fit=4.0),
+            ],
             overall_rhythm=4.0,
+            overall_transition_quality=4.0,
+            overall_audiovisual_sync=4.0,
             overall_completeness=4.0,
-            overall_excitement=4.0,
             overall_instruction_fit=4.0,
             overall_average=4.0,
+            segment_content_completeness=4.0,
+            segment_quality=4.0,
+            segment_instruction_fit=4.0,
+            segment_average=4.0,
+            video_rhythm=4.0,
+            video_transition_quality=4.0,
+            video_audiovisual_sync=4.0,
+            video_content_completeness=4.0,
+            video_instruction_fit=4.0,
+            video_average=4.0,
         )
 
         result = compute_weighted_score(eval_report, judge_report)
         assert result["eval_score"] == 1.0
         assert result["judge_score"] == pytest.approx(0.4)
+        assert result["segment_judge_score"] == pytest.approx(0.4)
+        assert result["video_judge_score"] == pytest.approx(0.4)
         assert result["weighted_score"] == pytest.approx(0.7)
         assert result["degraded"] is False
 
@@ -667,7 +873,7 @@ class TestWeightedScore:
                 "ground_truth": [{"start_time": 0.0, "end_time": 5.0}],
             },
         ])
-        judge_report = JudgeReport(degraded=True)
+        judge_report = JudgeReport(degraded=True, segment_degraded=True, video_degraded=True)
 
         result = compute_weighted_score(eval_report, judge_report)
         assert result["eval_score"] == 1.0
@@ -688,12 +894,29 @@ class TestWeightedScore:
             },
         ])
         judge_report = JudgeReport(
-            scores=[JudgeScore(rhythm=10.0, completeness=10.0, excitement=10.0, instruction_fit=10.0)],
+            scores=[JudgeScore(rhythm=10.0, transition_quality=10.0, audiovisual_sync=10.0, completeness=10.0, instruction_fit=10.0)],
+            segment_scores=[
+                SegmentJudgeScore(content_completeness=10.0, segment_quality=10.0, instruction_fit=10.0),
+            ],
+            video_scores=[
+                VideoJudgeScore(rhythm=10.0, transition_quality=10.0, audiovisual_sync=10.0, content_completeness=10.0, instruction_fit=10.0),
+            ],
             overall_rhythm=10.0,
+            overall_transition_quality=10.0,
+            overall_audiovisual_sync=10.0,
             overall_completeness=10.0,
-            overall_excitement=10.0,
             overall_instruction_fit=10.0,
             overall_average=10.0,
+            segment_content_completeness=10.0,
+            segment_quality=10.0,
+            segment_instruction_fit=10.0,
+            segment_average=10.0,
+            video_rhythm=10.0,
+            video_transition_quality=10.0,
+            video_audiovisual_sync=10.0,
+            video_content_completeness=10.0,
+            video_instruction_fit=10.0,
+            video_average=10.0,
         )
 
         result = compute_weighted_score(eval_report, judge_report, weight_eval=0.6, weight_judge=0.4)
@@ -704,7 +927,7 @@ class TestWeightedScore:
         report = judge.judge_all([])
         assert report.degraded is False
 
-        report2 = JudgeReport(degraded=True)
+        report2 = JudgeReport(degraded=True, segment_degraded=True, video_degraded=True)
         assert report2.degraded is True
 
 
@@ -718,20 +941,20 @@ class TestLLMJudgeRetry:
             {
                 "choices": [{
                     "message": {
-                        "content": '{"节奏感": 4, "内容完整性": 4, "精彩程度": 5, "指令契合度": 4, "总体评价": "不错"}'
+                        "content": '{"节奏感": 4, "转场质量": 4, "音画同步": 5, "内容完整性": 4, "指令契合度": 4, "主要优点": "不错"}'
                     }
                 }]
             },
         ]
         mock_client.extract_json.side_effect = lambda r: {
-            "节奏感": 4, "内容完整性": 4, "精彩程度": 5, "指令契合度": 4, "总体评价": "不错"
+            "节奏感": 4, "转场质量": 4, "音画同步": 5, "内容完整性": 4, "指令契合度": 4, "主要优点": "不错"
         }
         judge._ark_client = mock_client
 
         score = judge.judge("体育", "测试", "", [], max_retries=3)
         assert score.error is None
         assert score.rhythm == 4.0
-        assert score.excitement == 5.0
+        assert score.audiovisual_sync == 5.0
         assert mock_client.chat.call_count == 3
 
     def test_judge_retry_all_fail(self, mocker):
@@ -757,6 +980,8 @@ class TestLLMJudgeRetry:
         ]
         report = judge.judge_all(cases, max_retries=2)
         assert report.degraded is True
+        assert report.segment_degraded is True
+        assert report.video_degraded is True
         assert report.overall_average == 0.0
         assert len(report.scores) == 1
         assert report.scores[0].error is not None
@@ -776,20 +1001,39 @@ class TestReportWithWeightedScore:
             },
         ])
         judge_report = JudgeReport(
-            scores=[JudgeScore(rhythm=4.0, completeness=4.0, excitement=5.0, instruction_fit=4.0, overall_comment="不错")],
+            scores=[JudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, completeness=4.0, instruction_fit=4.0, overall_comment="不错")],
+            segment_scores=[
+                SegmentJudgeScore(content_completeness=4.0, segment_quality=4.0, instruction_fit=4.0, overall_comment="片段不错"),
+            ],
+            video_scores=[
+                VideoJudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, content_completeness=4.0, instruction_fit=4.0, overall_comment="集锦不错"),
+            ],
             overall_rhythm=4.0,
+            overall_transition_quality=4.0,
+            overall_audiovisual_sync=4.0,
             overall_completeness=4.0,
-            overall_excitement=5.0,
             overall_instruction_fit=4.0,
-            overall_average=4.25,
+            overall_average=4.0,
+            segment_content_completeness=4.0,
+            segment_quality=4.0,
+            segment_instruction_fit=4.0,
+            segment_average=4.0,
+            video_rhythm=4.0,
+            video_transition_quality=4.0,
+            video_audiovisual_sync=4.0,
+            video_content_completeness=4.0,
+            video_instruction_fit=4.0,
+            video_average=4.0,
         )
-        weighted = {"eval_score": 1.0, "judge_score": 0.425, "weighted_score": 0.7125, "degraded": False}
+        weighted = {"eval_score": 1.0, "judge_score": 0.4, "segment_judge_score": 0.4, "video_judge_score": 0.4, "weighted_score": 0.7, "degraded": False}
 
         gen = ReportGenerator(ReportConfig(output_dir=str(tmp_path), save_charts=False))
         text = gen.generate(eval_report, judge_report, weighted)
 
         assert "加权总分" in text
-        assert "0.7125" in text
+        assert "0.7" in text
+        assert "Segment Judge" in text
+        assert "Video Judge" in text
 
     def test_generate_with_degraded_weighted(self, tmp_path):
         evaluator = HighlightEvaluator()
@@ -803,8 +1047,8 @@ class TestReportWithWeightedScore:
                 "ground_truth": [{"start_time": 0.0, "end_time": 5.0}],
             },
         ])
-        judge_report = JudgeReport(degraded=True)
-        weighted = {"eval_score": 1.0, "judge_score": 0.0, "weighted_score": 1.0, "degraded": True}
+        judge_report = JudgeReport(degraded=True, segment_degraded=True, video_degraded=True)
+        weighted = {"eval_score": 1.0, "judge_score": 0.0, "segment_judge_score": 0.0, "video_judge_score": 0.0, "weighted_score": 1.0, "degraded": True}
 
         gen = ReportGenerator(ReportConfig(output_dir=str(tmp_path), save_charts=False))
         text = gen.generate(eval_report, judge_report, weighted)
@@ -825,14 +1069,31 @@ class TestReportWithWeightedScore:
             },
         ])
         judge_report = JudgeReport(
-            scores=[JudgeScore(rhythm=4.0, completeness=4.0, excitement=5.0, instruction_fit=4.0, overall_comment="不错")],
+            scores=[JudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, completeness=4.0, instruction_fit=4.0, overall_comment="不错")],
+            segment_scores=[
+                SegmentJudgeScore(content_completeness=4.0, segment_quality=4.0, instruction_fit=4.0, overall_comment="片段不错"),
+            ],
+            video_scores=[
+                VideoJudgeScore(rhythm=4.0, transition_quality=4.0, audiovisual_sync=4.0, content_completeness=4.0, instruction_fit=4.0, overall_comment="集锦不错"),
+            ],
             overall_rhythm=4.0,
+            overall_transition_quality=4.0,
+            overall_audiovisual_sync=4.0,
             overall_completeness=4.0,
-            overall_excitement=5.0,
             overall_instruction_fit=4.0,
-            overall_average=4.25,
+            overall_average=4.0,
+            segment_content_completeness=4.0,
+            segment_quality=4.0,
+            segment_instruction_fit=4.0,
+            segment_average=4.0,
+            video_rhythm=4.0,
+            video_transition_quality=4.0,
+            video_audiovisual_sync=4.0,
+            video_content_completeness=4.0,
+            video_instruction_fit=4.0,
+            video_average=4.0,
         )
-        weighted = {"eval_score": 1.0, "judge_score": 0.425, "weighted_score": 0.7125, "degraded": False}
+        weighted = {"eval_score": 1.0, "judge_score": 0.4, "segment_judge_score": 0.4, "video_judge_score": 0.4, "weighted_score": 0.7, "degraded": False}
 
         gen = ReportGenerator(ReportConfig(output_dir=str(tmp_path), save_charts=False))
         gen.generate(eval_report, judge_report, weighted)
@@ -840,5 +1101,7 @@ class TestReportWithWeightedScore:
         json_path = tmp_path / "report.json"
         data = json.loads(json_path.read_text(encoding="utf-8"))
         assert "weighted_score" in data
-        assert data["weighted_score"]["weighted_score"] == 0.7125
+        assert data["weighted_score"]["weighted_score"] == 0.7
+        assert data["segment_judge"]["average"] == 4.0
+        assert data["video_judge"]["average"] == 4.0
         assert data["llm_judge"]["degraded"] is False

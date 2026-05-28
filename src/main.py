@@ -17,11 +17,41 @@ from .video_fetcher import (
 
 logger = logging.getLogger(__name__)
 
+# LAS 计费单价（元/分钟）
+LAS_PRICE_PER_MINUTE = {
+    "simple": 1.5,
+    "detail": 2.0,
+}
+
+
+def estimate_las_cost(duration_seconds: float, mode: str = "detail") -> float:
+    """预估 LAS 剪辑费用（元）。"""
+    minutes = duration_seconds / 60.0
+    rate = LAS_PRICE_PER_MINUTE.get(mode, LAS_PRICE_PER_MINUTE["detail"])
+    return round(minutes * rate, 4)
+
 
 @dataclass
 class PipelineConfig:
     editor: EditorConfig = field(default_factory=EditorConfig)
     output_dir: str = ""
+
+
+@dataclass
+class PipelineTiming:
+    """各阶段耗时（秒），-1 表示未执行该阶段。"""
+    fetch: float = 0.0
+    upload: float = 0.0
+    las_inference: float = 0.0
+    clip_export: float = 0.0
+
+    def to_dict(self) -> dict[str, float]:
+        return {
+            "fetch": round(self.fetch, 2),
+            "upload": round(self.upload, 2),
+            "las_inference": round(self.las_inference, 2),
+            "clip_export": round(self.clip_export, 2),
+        }
 
 
 @dataclass
@@ -31,6 +61,8 @@ class PipelineResult:
     error: str | None = None
     session_dir: str = ""
     elapsed_time: float = 0.0
+    timing: PipelineTiming = field(default_factory=PipelineTiming)
+    estimated_cost_yuan: float = 0.0
 
 
 class VideoHighlightPipeline:
@@ -85,7 +117,9 @@ class VideoHighlightPipeline:
     ) -> PipelineResult:
         t_start = time.time()
 
+        t0 = time.time()
         metadata = self.fetcher.fetch(source)
+        t_fetch = time.time() - t0
         logger.info("视频预处理完成: duration=%.1fs, fps=%.1f", metadata.duration, metadata.fps)
 
         session_dir = self._make_session_dir(metadata.path)
@@ -93,18 +127,32 @@ class VideoHighlightPipeline:
         if skip_edit:
             return PipelineResult(
                 metadata=metadata, session_dir=session_dir,
+                elapsed_time=time.time() - t_start,
+                timing=PipelineTiming(fetch=t_fetch),
             )
 
         self.config.editor.output_dir = session_dir
+        t1 = time.time()
         edit = self.editor.edit_e2e(metadata.path, description)
+        t_edit = time.time() - t1
+        estimated_cost = estimate_las_cost(metadata.duration, self.config.editor.las_mode)
         logger.info("LAS 端到端剪辑完成: source=%s, output=%s, segments=%d",
                     edit.source, edit.output_path, len(edit.segments))
 
         self._upload_result_to_tos(edit.session_tos_path, metadata, edit)
 
+        timing = PipelineTiming(
+            fetch=t_fetch,
+            upload=edit.timing.upload if edit.timing else -1,
+            las_inference=edit.timing.las_inference if edit.timing else -1,
+            clip_export=edit.timing.clip_export if edit.timing else -1,
+        )
+
         return PipelineResult(
             metadata=metadata, edit=edit, session_dir=session_dir,
             elapsed_time=time.time() - t_start,
+            timing=timing,
+            estimated_cost_yuan=estimated_cost,
         )
 
     def _upload_result_to_tos(self, tos_dir: str, metadata: VideoMetadata, edit: EditResult) -> None:
@@ -182,6 +230,9 @@ class VideoHighlightPipeline:
             lines.append("\n[剪辑输出]")
             lines.append(f"  输出路径: {result.edit.output_path}")
 
+        if result.estimated_cost_yuan > 0:
+            lines.append(f"\n[预估费用] ¥{result.estimated_cost_yuan:.2f}")
+
         if result.error:
             lines.append(f"\n[警告] {result.error}")
 
@@ -206,6 +257,9 @@ class VideoHighlightPipeline:
                 "segments": result.edit.segments,
                 "session_tos_path": result.edit.session_tos_path,
             }
+
+        if result.estimated_cost_yuan > 0:
+            output["estimated_cost_yuan"] = result.estimated_cost_yuan
 
         if result.error:
             output["error"] = result.error

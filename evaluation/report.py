@@ -47,6 +47,21 @@ class ReportGenerator:
         lines.append(f"  集锦时长占比:   {eval_report.overall_total_duration_ratio:.1%}")
         lines.append(f"  指令时长契合度: {eval_report.overall_instruction_duration_fit:.2f}")
         lines.append("")
+        lines.append("  多 IoU 阈值 mAP (QVHighlights 标准):")
+        lines.append(f"    mAP@0.5:  {eval_report.overall_map_50:.3f}")
+        lines.append(f"    mAP@0.75: {eval_report.overall_map_75:.3f}")
+        lines.append(f"    Avg mAP:  {eval_report.overall_avg_map:.3f}")
+        lines.append("")
+        lines.append("  排序相关性 (TVSum 标准):")
+        if eval_report.overall_kendall_tau is not None:
+            lines.append(f"    Kendall's τ:  {eval_report.overall_kendall_tau:.3f}")
+        else:
+            lines.append("    Kendall's τ:  N/A (scipy 不可用或样本不足)")
+        if eval_report.overall_spearman_rho is not None:
+            lines.append(f"    Spearman's ρ: {eval_report.overall_spearman_rho:.3f}")
+        else:
+            lines.append("    Spearman's ρ: N/A (scipy 不可用或样本不足)")
+        lines.append("")
         lines.append("  tIoU 分布:")
         lines.append(f"    优秀 (≥0.8): {eval_report.iou_distribution.get('excellent', 0)}")
         lines.append(f"    合格 (≥0.5): {eval_report.iou_distribution.get('qualified', 0)}")
@@ -66,6 +81,15 @@ class ReportGenerator:
         lines.append(f"  总处理耗时:        {eval_report.cost.total_elapsed:.1f}s")
         lines.append(f"  平均耗时/case:     {eval_report.cost.avg_elapsed:.1f}s")
         lines.append(f"  处理倍速:          {eval_report.cost.processing_ratio:.2f}x")
+        lines.append("")
+        lines.append("  阶段耗时 (平均):")
+        lines.append(f"    视频获取:        {eval_report.cost.timing_fetch_avg:.1f}s")
+        lines.append(f"    视频上传:        {eval_report.cost.timing_upload_avg:.1f}s")
+        lines.append(f"    LAS 推理:        {eval_report.cost.timing_las_inference_avg:.1f}s")
+        lines.append(f"    片段导出:        {eval_report.cost.timing_clip_export_avg:.1f}s")
+        lines.append("")
+        lines.append(f"  预估总费用:        ¥{eval_report.cost.total_cost_yuan:.2f}")
+        lines.append(f"  平均费用/case:     ¥{eval_report.cost.avg_cost_yuan:.2f}")
         if eval_report.cost.memory_peak_mb > 0:
             lines.append(f"  内存峰值:          {eval_report.cost.memory_peak_mb:.1f} MB")
             lines.append(f"  内存均值:          {eval_report.cost.memory_avg_mb:.1f} MB")
@@ -111,18 +135,44 @@ class ReportGenerator:
         lines.append("## 二、LLM Judge 主观评测")
         lines.append("")
 
-        if hasattr(judge_report, 'degraded') and judge_report.degraded:
-            lines.append("  [降级] LLM Judge 不可用，已降级为纯量化评测")
-        elif hasattr(judge_report, 'overall_average'):
-            lines.append(f"  节奏感:       {judge_report.overall_rhythm:.2f} / 10.0")
-            lines.append(f"  内容完整性:   {judge_report.overall_completeness:.2f} / 10.0")
-            lines.append(f"  精彩程度:     {judge_report.overall_excitement:.2f} / 10.0")
-            lines.append(f"  指令契合度:   {judge_report.overall_instruction_fit:.2f} / 10.0")
-            lines.append(f"  综合均分:     {judge_report.overall_average:.2f} / 10.0")
-
+        # Segment Judge
+        lines.append("### 2.1 Segment Judge（片段质量评测 — 逐个观看片段视频）")
+        lines.append("")
+        segment_degraded = getattr(judge_report, 'segment_degraded', True)
+        if segment_degraded:
+            lines.append("  [降级] Segment Judge 不可用")
+        elif hasattr(judge_report, 'segment_average'):
+            lines.append(f"  内容完整性: {judge_report.segment_content_completeness:.2f} / 10.0")
+            lines.append(f"  片段质量:   {getattr(judge_report, 'segment_quality', 0):.2f} / 10.0")
+            lines.append(f"  指令契合度: {judge_report.segment_instruction_fit:.2f} / 10.0")
+            lines.append(f"  综合均分:   {judge_report.segment_average:.2f} / 10.0")
             lines.append("")
-            lines.append("  各用例 LLM 评价:")
-            for i, score in enumerate(judge_report.scores):
+            lines.append("  各用例 Segment 评价:")
+            for i, score in enumerate(judge_report.segment_scores):
+                if score.error:
+                    lines.append(f"    #{i + 1}: [ERROR] {score.error}")
+                else:
+                    lines.append(
+                        f"    #{i + 1}: {score.average:.1f}/10.0 — {score.overall_comment}"
+                    )
+
+        # Video Judge
+        lines.append("")
+        lines.append("### 2.2 Video Judge（集锦质量评测 — 观看拼接后集锦视频）")
+        lines.append("")
+        video_degraded = getattr(judge_report, 'video_degraded', True)
+        if video_degraded:
+            lines.append("  [降级] Video Judge 不可用")
+        elif hasattr(judge_report, 'video_average'):
+            lines.append(f"  节奏感:     {judge_report.video_rhythm:.2f} / 10.0")
+            lines.append(f"  转场质量:   {getattr(judge_report, 'video_transition_quality', 0):.2f} / 10.0")
+            lines.append(f"  音画同步:   {judge_report.video_audiovisual_sync:.2f} / 10.0")
+            lines.append(f"  内容完整性: {judge_report.video_content_completeness:.2f} / 10.0")
+            lines.append(f"  指令契合度: {judge_report.video_instruction_fit:.2f} / 10.0")
+            lines.append(f"  综合均分:   {judge_report.video_average:.2f} / 10.0")
+            lines.append("")
+            lines.append("  各用例 Video 评价:")
+            for i, score in enumerate(judge_report.video_scores):
                 if score.error:
                     lines.append(f"    #{i + 1}: [ERROR] {score.error}")
                 else:
@@ -140,11 +190,14 @@ class ReportGenerator:
                 lines.append(f"  加权总分: {weighted['weighted_score']:.4f} / 1.0 (纯量化)")
             else:
                 eval_part = weighted["eval_score"] * 0.5
+                seg_part = weighted.get("segment_judge_score", 0.0) * 0.25
+                vid_part = weighted.get("video_judge_score", 0.0) * 0.25
                 judge_part = weighted["judge_score"] * 0.5
-                lines.append(f"  量化评测分 (F1): {weighted['eval_score']:.4f} × 0.5 = {eval_part:.4f}")
-                lines.append(f"  LLM Judge 分:    {weighted['judge_score']:.4f} × 0.5 = {judge_part:.4f}")
+                lines.append(f"  量化评测分 (F1):   {weighted['eval_score']:.4f} × 0.5 = {eval_part:.4f}")
+                lines.append(f"  Segment Judge 分: {weighted.get('segment_judge_score', 0):.4f} × 0.25 = {seg_part:.4f}")
+                lines.append(f"  Video Judge 分:   {weighted.get('video_judge_score', 0):.4f} × 0.25 = {vid_part:.4f}")
                 lines.append(f"  ─────────────────────────────────")
-                lines.append(f"  加权总分:        {weighted['weighted_score']:.4f} / 1.0")
+                lines.append(f"  加权总分:          {weighted['weighted_score']:.4f} / 1.0")
 
         lines.append("")
         lines.append("=" * 70)
@@ -212,6 +265,11 @@ class ReportGenerator:
                 "overall_segment_count_deviation": round(eval_report.overall_segment_count_deviation, 2),
                 "overall_total_duration_ratio": round(eval_report.overall_total_duration_ratio, 3),
                 "overall_instruction_duration_fit": round(eval_report.overall_instruction_duration_fit, 2),
+                "overall_map_50": round(eval_report.overall_map_50, 3),
+                "overall_map_75": round(eval_report.overall_map_75, 3),
+                "overall_avg_map": round(eval_report.overall_avg_map, 3),
+                "overall_kendall_tau": round(eval_report.overall_kendall_tau, 3) if eval_report.overall_kendall_tau is not None else None,
+                "overall_spearman_rho": round(eval_report.overall_spearman_rho, 3) if eval_report.overall_spearman_rho is not None else None,
                 "overall_hit_rate_1": round(eval_report.overall_hit_rate_1, 3),
                 "overall_hit_rate_3": round(eval_report.overall_hit_rate_3, 3),
                 "overall_mae": round(eval_report.overall_mae, 2),
@@ -234,6 +292,14 @@ class ReportGenerator:
                     "memory_avg_mb": round(eval_report.cost.memory_avg_mb, 1),
                     "concurrency": eval_report.cost.concurrency,
                     "concurrent_throughput": round(eval_report.cost.concurrent_throughput, 2),
+                    "timing": {
+                        "fetch_avg": round(eval_report.cost.timing_fetch_avg, 1),
+                        "upload_avg": round(eval_report.cost.timing_upload_avg, 1),
+                        "las_inference_avg": round(eval_report.cost.timing_las_inference_avg, 1),
+                        "clip_export_avg": round(eval_report.cost.timing_clip_export_avg, 1),
+                    },
+                    "total_cost_yuan": eval_report.cost.total_cost_yuan,
+                    "avg_cost_yuan": eval_report.cost.avg_cost_yuan,
                 },
                 "by_category": {
                     k: {"f1": round(v["f1"], 3), "count": v["count"]}
@@ -262,6 +328,11 @@ class ReportGenerator:
                         "segment_count_deviation": round(s.segment_count_deviation, 2),
                         "total_duration_ratio": round(s.total_duration_ratio, 3),
                         "instruction_duration_fit": round(s.instruction_duration_fit, 2),
+                        "map_50": round(s.map_50, 3),
+                        "map_75": round(s.map_75, 3),
+                        "avg_map": round(s.avg_map, 3),
+                        "kendall_tau": round(s.kendall_tau, 3) if s.kendall_tau is not None else None,
+                        "spearman_rho": round(s.spearman_rho, 3) if s.spearman_rho is not None else None,
                         "iou_distribution": s.iou_distribution,
                         "error": s.error,
                     }
@@ -270,19 +341,62 @@ class ReportGenerator:
             },
         }
 
-        if hasattr(judge_report, 'overall_average'):
+        if hasattr(judge_report, 'segment_average') or hasattr(judge_report, 'video_average'):
+            data["segment_judge"] = {
+                "content_completeness": round(getattr(judge_report, "segment_content_completeness", 0), 2),
+                "segment_quality": round(getattr(judge_report, "segment_quality", 0), 2),
+                "instruction_fit": round(getattr(judge_report, "segment_instruction_fit", 0), 2),
+                "average": round(getattr(judge_report, "segment_average", 0), 2),
+                "degraded": getattr(judge_report, "segment_degraded", True),
+                "cases": [
+                    {
+                        "content_completeness": s.content_completeness,
+                        "segment_quality": s.segment_quality,
+                        "instruction_fit": s.instruction_fit,
+                        "average": round(s.average, 1),
+                        "comment": s.overall_comment,
+                        "error": s.error,
+                    }
+                    for s in getattr(judge_report, "segment_scores", [])
+                ],
+            }
+            data["video_judge"] = {
+                "rhythm": round(getattr(judge_report, "video_rhythm", 0), 2),
+                "transition_quality": round(getattr(judge_report, "video_transition_quality", 0), 2),
+                "audiovisual_sync": round(getattr(judge_report, "video_audiovisual_sync", 0), 2),
+                "content_completeness": round(getattr(judge_report, "video_content_completeness", 0), 2),
+                "instruction_fit": round(getattr(judge_report, "video_instruction_fit", 0), 2),
+                "average": round(getattr(judge_report, "video_average", 0), 2),
+                "degraded": getattr(judge_report, "video_degraded", True),
+                "cases": [
+                    {
+                        "rhythm": s.rhythm,
+                        "transition_quality": s.transition_quality,
+                        "audiovisual_sync": s.audiovisual_sync,
+                        "content_completeness": s.content_completeness,
+                        "instruction_fit": s.instruction_fit,
+                        "average": round(s.average, 1),
+                        "comment": s.overall_comment,
+                        "error": s.error,
+                    }
+                    for s in getattr(judge_report, "video_scores", [])
+                ],
+            }
+            # 向后兼容
             data["llm_judge"] = {
-                "overall_rhythm": round(judge_report.overall_rhythm, 2),
-                "overall_completeness": round(judge_report.overall_completeness, 2),
-                "overall_excitement": round(judge_report.overall_excitement, 2),
-                "overall_instruction_fit": round(judge_report.overall_instruction_fit, 2),
-                "overall_average": round(judge_report.overall_average, 2),
+                "overall_rhythm": round(getattr(judge_report, "overall_rhythm", 0), 2),
+                "overall_transition_quality": round(getattr(judge_report, "overall_transition_quality", 0), 2),
+                "overall_audiovisual_sync": round(getattr(judge_report, "overall_audiovisual_sync", 0), 2),
+                "overall_completeness": round(getattr(judge_report, "overall_completeness", 0), 2),
+                "overall_instruction_fit": round(getattr(judge_report, "overall_instruction_fit", 0), 2),
+                "overall_average": round(getattr(judge_report, "overall_average", 0), 2),
                 "degraded": getattr(judge_report, "degraded", False),
                 "cases": [
                     {
                         "rhythm": s.rhythm,
+                        "transition_quality": s.transition_quality,
+                        "audiovisual_sync": s.audiovisual_sync,
                         "completeness": s.completeness,
-                        "excitement": s.excitement,
                         "instruction_fit": s.instruction_fit,
                         "average": round(s.average, 1),
                         "comment": s.overall_comment,
@@ -352,25 +466,26 @@ class ReportGenerator:
             for i, v in enumerate(f1s):
                 ax.text(i, v + 0.02, f"{v:.2f}", ha="center")
 
-        # 4. LLM Judge radar
-        if hasattr(judge_report, 'overall_average') and judge_report.overall_average > 0:
+        # 4. Video Judge chart
+        if hasattr(judge_report, 'video_average') and judge_report.video_average > 0:
             ax = axes[1][1]
-            ax.set_title("LLM Judge")
-            dims = ["Rhythm", "Completeness", "Excitement", "Fit"]
+            ax.set_title("Video Judge（集锦质量）")
+            dims = ["Rhythm", "Transition", "AV Sync", "Complete", "Fit"]
             values = [
-                judge_report.overall_rhythm,
-                judge_report.overall_completeness,
-                judge_report.overall_excitement,
-                judge_report.overall_instruction_fit,
+                judge_report.video_rhythm,
+                getattr(judge_report, 'video_transition_quality', 0),
+                judge_report.video_audiovisual_sync,
+                judge_report.video_content_completeness,
+                judge_report.video_instruction_fit,
             ]
             x = np.arange(len(dims))
-            ax.bar(x, values, color=plt.cm.Set3(np.linspace(0, 1, 4)))
+            ax.bar(x, values, color=plt.cm.Set3(np.linspace(0, 1, 5)))
             ax.set_xticks(x)
-            ax.set_xticklabels(dims)
+            ax.set_xticklabels(dims, fontsize=8)
             ax.set_ylabel("Score")
             ax.set_ylim(0, 10)
             for i, v in enumerate(values):
-                ax.text(i, v + 0.1, f"{v:.1f}", ha="center")
+                ax.text(i, v + 0.1, f"{v:.1f}", ha="center", fontsize=7)
 
         plt.tight_layout()
         chart_path = out_dir / "charts.png"

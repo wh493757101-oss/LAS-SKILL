@@ -147,25 +147,47 @@ eval_report, judge_report, report_text = runner.run()
 print(report_text)
 ```
 
-### 评测指标
+### 评测体系
 
-| 指标 | 说明 |
-|------|------|
-| IoU / F1 | 片段时间戳匹配精度 |
-| Hit Rate @1/@3 | Top-K 片段命中率 |
-| MAE | 平均时间偏差（秒） |
-| LLM Judge | 节奏感/完整性/精彩度/指令契合度（1-5 分） |
+三层评测架构：**tIoU 量化评测（50%）→ 双 LLM Judge（50%）→ 加权融合**
+
+#### 量化评测（tIoU 时间轴匹配）
+
+| 指标 | 说明 | 对标 |
+|------|------|------|
+| Precision / Recall / F1 | 宏平均 + 微平均，贪心 IoU 匹配 | 核心指标 |
+| Hit Rate @1 / @3 | Top-K 片段命中率 | — |
+| MAE | 命中片段的时间偏差（秒） | — |
+| mAP@0.5 / mAP@0.75 / Avg mAP | 10 个 IoU 阈值 [0.5:0.05:0.95] | QVHighlights |
+| Kendall's τ / Spearman's ρ | 预测排序 vs GT 排序相关性 | TVSum |
+
+#### 双 LLM Judge（主观评测）
+
+| Judge | 输入 | 评测维度 | 权重 |
+|-------|------|----------|------|
+| Segment Judge | 逐个高光片段视频 | 内容完整性、片段质量、指令契合度 | 25% |
+| Video Judge | 拼接后的集锦视频 | 节奏感、转场质量、音画同步、内容完整性、指令契合度 | 25% |
+
+#### 加权总分
+
+```
+总分 = tIoU F1 × 0.5 + Segment Judge × 0.25 + Video Judge × 0.25
+```
 
 ### 添加测试用例
 
 1. 在 `cases.yaml` 中注册用例（id / category / difficulty / instruction）
 2. 创建 `case_XXX/` 目录，放入视频文件
-3. 编写 `instruction.json`（含 `prompt` 字段）
+3. 编写 `instruction.json`（含 `prompt`、`style`、`core_highlight_definition` 字段）
 4. 编写 `ground_truth.json`（含 `highlights` 数组）
 
 ```json
 // instruction.json
-{"prompt": "帮我把精彩片段剪成60秒集锦，节奏要快"}
+{
+  "prompt": "帮我把精彩片段剪成60秒集锦",
+  "style": "快节奏",
+  "core_highlight_definition": "进球、助攻、精彩扑救"
+}
 
 // ground_truth.json
 {
