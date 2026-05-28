@@ -34,12 +34,18 @@ class ReportGenerator:
         lines.append("## 一、时间戳 IoU 评测")
         lines.append("")
         lines.append(f"  整体 IoU:       {eval_report.overall_iou:.3f}")
-        lines.append(f"  整体 Precision: {eval_report.overall_precision:.3f}")
-        lines.append(f"  整体 Recall:    {eval_report.overall_recall:.3f}")
-        lines.append(f"  整体 F1:        {eval_report.overall_f1:.3f}")
+        lines.append(f"  整体 Precision: {eval_report.overall_precision:.3f} (宏平均)")
+        lines.append(f"  整体 Recall:    {eval_report.overall_recall:.3f} (宏平均)")
+        lines.append(f"  整体 F1:        {eval_report.overall_f1:.3f} (宏平均)")
+        lines.append(f"  微平均 Precision: {eval_report.overall_micro_precision:.3f}")
+        lines.append(f"  微平均 Recall:    {eval_report.overall_micro_recall:.3f}")
+        lines.append(f"  微平均 F1:        {eval_report.overall_micro_f1:.3f}")
         lines.append(f"  Hit Rate @1:    {eval_report.overall_hit_rate_1:.3f}")
         lines.append(f"  Hit Rate @3:    {eval_report.overall_hit_rate_3:.3f}")
         lines.append(f"  MAE (时间偏差): {eval_report.overall_mae:.2f}s")
+        lines.append(f"  片段数偏差率:   {eval_report.overall_segment_count_deviation:.2f}")
+        lines.append(f"  集锦时长占比:   {eval_report.overall_total_duration_ratio:.1%}")
+        lines.append(f"  指令时长契合度: {eval_report.overall_instruction_duration_fit:.2f}")
         lines.append("")
         lines.append("  tIoU 分布:")
         lines.append(f"    优秀 (≥0.8): {eval_report.iou_distribution.get('excellent', 0)}")
@@ -88,8 +94,8 @@ class ReportGenerator:
 
         lines.append("")
         lines.append("  各用例详情:")
-        lines.append(f"  {'ID':<12} {'类型':<8} {'难度':<8} {'来源':<6} {'Prec':<8} {'Recall':<8} {'F1':<8} {'HR@1':<8} {'MAE':<8}")
-        lines.append("  " + "-" * 78)
+        lines.append(f"  {'ID':<12} {'类型':<8} {'难度':<8} {'来源':<6} {'Prec':<8} {'Recall':<8} {'F1':<8} {'HR@1':<8} {'MAE':<8} {'时长%':<8} {'指令':<8}")
+        lines.append("  " + "-" * 94)
         for score in eval_report.scores:
             if score.error:
                 lines.append(f"  {score.case_id:<12} {'-':<8} {'-':<8} {'-':<6} [SKIP] {score.error}")
@@ -98,6 +104,7 @@ class ReportGenerator:
                     f"  {score.case_id:<12} {score.category:<8} {score.difficulty:<8} "
                     f"{score.source_type:<6} {score.precision:<8.3f} {score.recall:<8.3f} "
                     f"{score.f1:<8.3f} {score.hit_rate_1:<8.3f} {score.mae:<8.2f}"
+                    f"{score.total_duration_ratio:<8.1%} {score.instruction_duration_fit:<8.2f}"
                 )
 
         lines.append("")
@@ -199,6 +206,12 @@ class ReportGenerator:
                 "overall_precision": eval_report.overall_precision,
                 "overall_recall": eval_report.overall_recall,
                 "overall_f1": eval_report.overall_f1,
+                "overall_micro_precision": round(eval_report.overall_micro_precision, 3),
+                "overall_micro_recall": round(eval_report.overall_micro_recall, 3),
+                "overall_micro_f1": round(eval_report.overall_micro_f1, 3),
+                "overall_segment_count_deviation": round(eval_report.overall_segment_count_deviation, 2),
+                "overall_total_duration_ratio": round(eval_report.overall_total_duration_ratio, 3),
+                "overall_instruction_duration_fit": round(eval_report.overall_instruction_duration_fit, 2),
                 "overall_hit_rate_1": round(eval_report.overall_hit_rate_1, 3),
                 "overall_hit_rate_3": round(eval_report.overall_hit_rate_3, 3),
                 "overall_mae": round(eval_report.overall_mae, 2),
@@ -246,6 +259,9 @@ class ReportGenerator:
                         "hit_rate_1": round(s.hit_rate_1, 3),
                         "hit_rate_3": round(s.hit_rate_3, 3),
                         "mae": round(s.mae, 2),
+                        "segment_count_deviation": round(s.segment_count_deviation, 2),
+                        "total_duration_ratio": round(s.total_duration_ratio, 3),
+                        "instruction_duration_fit": round(s.instruction_duration_fit, 2),
                         "iou_distribution": s.iou_distribution,
                         "error": s.error,
                     }

@@ -11,6 +11,7 @@ from evaluation.evaluator import (
     SegmentMatch,
     TestCaseLoader,
     compute_weighted_score,
+    parse_target_duration,
 )
 from evaluation.llm_judge import (
     JudgeReport,
@@ -85,6 +86,7 @@ class TestHighlightEvaluator:
         score = evaluator.score_case(
             "case_001", predicted, ground_truth,
             category="体育", difficulty="easy", source_type="local",
+            video_duration=60.0,
         )
 
         assert score.case_id == "case_001"
@@ -95,6 +97,9 @@ class TestHighlightEvaluator:
         assert score.hit_rate_3 == 1.0
         assert score.mae == 0.0
         assert score.iou_distribution["excellent"] == 1
+        assert score.segment_count_deviation == 0.0
+        assert score.total_duration_ratio == pytest.approx(5.0 / 60.0)
+        assert score.instruction_duration_fit == 1.0
         assert score.error is None
 
     def test_score_case_empty_gt(self):
@@ -134,9 +139,11 @@ class TestHighlightEvaluator:
 
         report = evaluator.evaluate_all(results)
         assert report.overall_f1 == 1.0
+        assert report.overall_micro_f1 == 1.0
         assert report.overall_hit_rate_1 == 1.0
         assert report.overall_hit_rate_3 == 1.0
         assert report.overall_mae == 0.0
+        assert report.overall_segment_count_deviation == 0.0
         assert report.iou_distribution["excellent"] == 2
         assert report.exception_rate == 0.0
         assert len(report.scores) == 2
@@ -226,6 +233,26 @@ class TestHighlightEvaluator:
         assert report.cost.completion_tokens == 800
         assert report.cost.video_duration == 180.0
         assert report.cost.tokens_per_minute == pytest.approx(2933.33, rel=0.01)
+
+
+class TestParseTargetDuration:
+    def test_seconds(self):
+        assert parse_target_duration("剪辑60秒精彩集锦") == 60.0
+
+    def test_minutes(self):
+        assert parse_target_duration("剪1分钟高潮片段") == 60.0
+
+    def test_english_s(self):
+        assert parse_target_duration("make a 30s highlight") == 30.0
+
+    def test_english_min(self):
+        assert parse_target_duration("cut to 2min reel") == 120.0
+
+    def test_no_duration(self):
+        assert parse_target_duration("把精彩片段剪出来") is None
+
+    def test_empty(self):
+        assert parse_target_duration("") is None
 
 
 class TestLLMJudge:

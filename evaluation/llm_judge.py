@@ -148,7 +148,11 @@ class LLMJudge:
         video_path: str = "",
         max_retries: int = 3,
     ) -> JudgeScore:
-        if video_path and Path(video_path).exists():
+        is_video = video_path and (
+            video_path.startswith(("http://", "https://", "tos://"))
+            or Path(video_path).exists()
+        )
+        if is_video:
             return self._judge_video(category, target, style, segments, video_path, max_retries)
         return self._judge_text_only(category, target, style, segments, max_retries)
 

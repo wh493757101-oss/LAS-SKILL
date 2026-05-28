@@ -152,6 +152,7 @@ class EvalRunner:
             "api_retries": 0,
             "memory_peak_mb": peak_bytes / (1024 * 1024),
             "memory_avg_mb": 0.0,
+            "edit_output_path": result.edit.output_path if result.edit else "",
         }
 
     def _run_concurrent(self, cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -215,6 +216,6 @@ class EvalRunner:
                 "target": r.get("target", ""),
                 "style": r.get("style", ""),
                 "segments": r["predicted"],
-                "video_path": r.get("video_path", ""),
+                "video_path": r.get("edit_output_path", ""),
             })
         return judge_cases

@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,21 @@ from typing import Any
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+def parse_target_duration(text: str) -> float | None:
+    """从指令文本中提取目标时长（秒），无明确时长返回 None。"""
+    patterns = [
+        (r"(\d+)\s*秒", 1),
+        (r"(\d+)\s*分钟", 60),
+        (r"(\d+)\s*min", 60),
+        (r"(\d+)\s*s\b", 1),
+    ]
+    for pat, multiplier in patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            return float(m.group(1)) * multiplier
+    return None
 
 
 @dataclass
@@ -37,6 +53,9 @@ class CaseScore:
     mae: float = 0.0
     iou_distribution: dict[str, int] = field(default_factory=dict)
     matched_pairs: list[SegmentMatch] = field(default_factory=list)
+    segment_count_deviation: float = 0.0
+    total_duration_ratio: float = 0.0
+    instruction_duration_fit: float = 1.0
     error: str | None = None
 
 
@@ -74,6 +93,12 @@ class EvalReport:
     exception_rate: float = 0.0
     exception_count: int = 0
     total_count: int = 0
+    overall_micro_precision: float = 0.0
+    overall_micro_recall: float = 0.0
+    overall_micro_f1: float = 0.0
+    overall_segment_count_deviation: float = 0.0
+    overall_total_duration_ratio: float = 0.0
+    overall_instruction_duration_fit: float = 1.0
     cost: CostStats = field(default_factory=CostStats)
     by_category: dict[str, dict[str, Any]] = field(default_factory=dict)
     by_difficulty: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -175,6 +200,8 @@ class HighlightEvaluator:
         category: str = "",
         difficulty: str = "",
         source_type: str = "local",
+        target_duration: float | None = None,
+        video_duration: float = 0.0,
     ) -> CaseScore:
         if not ground_truth:
             return CaseScore(
@@ -216,6 +243,19 @@ class HighlightEvaluator:
         for iou in iou_scores:
             iou_dist[self.classify_iou(iou)] += 1
 
+        # 片段数量偏差率
+        segment_count_deviation = abs(len(predicted) - len(ground_truth)) / len(ground_truth)
+
+        # 集锦总时长占比
+        total_pred_duration = sum(p["end_time"] - p["start_time"] for p in predicted)
+        total_duration_ratio = total_pred_duration / video_duration if video_duration > 0 else 0.0
+
+        # 指令时长契合度
+        instruction_duration_fit = 1.0
+        if target_duration is not None and target_duration > 0:
+            deviation = abs(total_pred_duration - target_duration) / target_duration
+            instruction_duration_fit = max(0.0, 1.0 - deviation)
+
         return CaseScore(
             case_id=case_id,
             category=category,
@@ -230,6 +270,9 @@ class HighlightEvaluator:
             mae=mae,
             iou_distribution=iou_dist,
             matched_pairs=matches,
+            segment_count_deviation=segment_count_deviation,
+            total_duration_ratio=total_duration_ratio,
+            instruction_duration_fit=instruction_duration_fit,
         )
 
     def evaluate_all(self, results: list[dict[str, Any]]) -> EvalReport:
@@ -246,6 +289,14 @@ class HighlightEvaluator:
         total_mae = 0.0
         mae_count = 0
         iou_count = 0
+        total_seg_dev = 0.0
+        total_dur_ratio = 0.0
+        total_inst_fit = 0.0
+
+        # 微平均：所有 case 的 hit_count 总和 / predicted 总和
+        micro_hit_count = 0
+        micro_pred_count = 0
+        micro_gt_count = 0
 
         cat_scores: dict[str, list[float]] = {}
         dif_scores: dict[str, list[float]] = {}
@@ -255,6 +306,7 @@ class HighlightEvaluator:
         src_counts: dict[str, int] = {}
 
         for r in results:
+            target_duration = parse_target_duration(r.get("target", ""))
             score = self.score_case(
                 case_id=r.get("case_id", ""),
                 predicted=r.get("predicted", []),
@@ -262,6 +314,8 @@ class HighlightEvaluator:
                 category=r.get("category", ""),
                 difficulty=r.get("difficulty", ""),
                 source_type=r.get("source_type", "local"),
+                target_duration=target_duration,
+                video_duration=r.get("video_duration", 0.0),
             )
             report.scores.append(score)
 
@@ -281,6 +335,16 @@ class HighlightEvaluator:
                 iou_count += 1
                 report.iou_distribution[self.classify_iou(iou)] += 1
 
+            total_seg_dev += score.segment_count_deviation
+            total_dur_ratio += score.total_duration_ratio
+            total_inst_fit += score.instruction_duration_fit
+
+            # 微平均统计
+            hit_count = sum(1 for m in score.matched_pairs if m.hit)
+            micro_hit_count += hit_count
+            micro_pred_count += len(r.get("predicted", []))
+            micro_gt_count += len(r.get("ground_truth", []))
+
             cat_scores.setdefault(score.category, []).append(score.f1)
             dif_scores.setdefault(score.difficulty, []).append(score.f1)
             src_scores.setdefault(score.source_type, []).append(score.f1)
@@ -297,6 +361,17 @@ class HighlightEvaluator:
         report.overall_hit_rate_1 = total_hit1 / n
         report.overall_hit_rate_3 = total_hit3 / n
         report.overall_mae = total_mae / mae_count if mae_count > 0 else 0.0
+
+        # 微平均
+        report.overall_micro_precision = micro_hit_count / micro_pred_count if micro_pred_count > 0 else 0.0
+        report.overall_micro_recall = micro_hit_count / micro_gt_count if micro_gt_count > 0 else 0.0
+        mp = report.overall_micro_precision
+        mr = report.overall_micro_recall
+        report.overall_micro_f1 = 2 * mp * mr / (mp + mr) if (mp + mr) > 0 else 0.0
+
+        report.overall_segment_count_deviation = total_seg_dev / n
+        report.overall_total_duration_ratio = total_dur_ratio / n
+        report.overall_instruction_duration_fit = total_inst_fit / n
 
         report.exception_count = len([s for s in report.scores if s.error])
         report.total_count = len(report.scores)
