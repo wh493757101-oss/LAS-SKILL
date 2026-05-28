@@ -86,8 +86,6 @@ class CostStats:
     timing_fetch_avg: float = 0.0
     timing_detection_avg: float = 0.0
     timing_clip_concat_avg: float = 0.0
-    total_cost_yuan: float = 0.0
-    avg_cost_yuan: float = 0.0
 
 
 @dataclass
@@ -530,8 +528,10 @@ class HighlightEvaluator:
         return report
 
     def _aggregate_costs(self, results: list[dict[str, Any]]) -> CostStats:
-        total_prompt = 0
-        total_completion = 0
+        total_detection_input = 0
+        total_detection_output = 0
+        total_judge_input = 0
+        total_judge_output = 0
         total_duration = 0.0
         total_elapsed = 0.0
         api_calls = 0
@@ -539,14 +539,15 @@ class HighlightEvaluator:
         memory_peaks: list[float] = []
         memory_avgs: list[float] = []
         timing_fetches: list[float] = []
-        timing_uploads: list[float] = []
         timing_inferences: list[float] = []
         timing_concat: list[float] = []
-        cost_values: list[float] = []
         for r in results:
-            usage = r.get("usage", {})
-            total_prompt += usage.get("prompt_tokens", 0)
-            total_completion += usage.get("completion_tokens", 0)
+            du = r.get("detection_usage", {})
+            ju = r.get("judge_usage", {})
+            total_detection_input += du.get("input_tokens", 0)
+            total_detection_output += du.get("output_tokens", 0)
+            total_judge_input += ju.get("input_tokens", 0)
+            total_judge_output += ju.get("output_tokens", 0)
             total_duration += r.get("video_duration", 0.0)
             total_elapsed += r.get("elapsed_time", 0.0)
             api_calls += r.get("api_calls", 0)
@@ -564,11 +565,8 @@ class HighlightEvaluator:
                 timing_inferences.append(timing["detection"])
             if timing.get("clip_concat", 0) > 0:
                 timing_concat.append(timing["clip_concat"])
-            cost = r.get("estimated_cost_yuan", 0.0)
-            if cost > 0:
-                cost_values.append(cost)
 
-        total_tokens = total_prompt + total_completion
+        total_tokens = total_detection_input + total_detection_output + total_judge_input + total_judge_output
         tokens_per_minute = total_tokens / (total_duration / 60.0) if total_duration > 0 else 0.0
         n = len(results) or 1
         avg_elapsed = total_elapsed / n
@@ -578,8 +576,8 @@ class HighlightEvaluator:
 
         return CostStats(
             total_tokens=total_tokens,
-            prompt_tokens=total_prompt,
-            completion_tokens=total_completion,
+            prompt_tokens=total_detection_input + total_judge_input,
+            completion_tokens=total_detection_output + total_judge_output,
             video_duration=total_duration,
             tokens_per_minute=tokens_per_minute,
             api_calls=api_calls,
@@ -594,8 +592,6 @@ class HighlightEvaluator:
             timing_fetch_avg=sum(timing_fetches) / len(timing_fetches) if timing_fetches else 0.0,
             timing_detection_avg=sum(timing_inferences) / len(timing_inferences) if timing_inferences else 0.0,
             timing_clip_concat_avg=sum(timing_concat) / len(timing_concat) if timing_concat else 0.0,
-            total_cost_yuan=round(sum(cost_values), 2),
-            avg_cost_yuan=round(sum(cost_values) / len(cost_values), 2) if cost_values else 0.0,
         )
 
 

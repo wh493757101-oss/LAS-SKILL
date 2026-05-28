@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .cost_estimator import estimate_ark_cost
 from .highlight_detector import DetectorConfig, HighlightDetector
 from .video_editor import EditResult, EditorConfig, VideoEditor
 from .video_fetcher import (
@@ -43,6 +42,24 @@ class PipelineTiming:
 
 
 @dataclass
+class TokenUsage:
+    """单次 API 调用的 token 消耗。"""
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.total,
+        }
+
+
+@dataclass
 class PipelineResult:
     metadata: VideoMetadata
     edit: EditResult | None = None
@@ -50,7 +67,8 @@ class PipelineResult:
     session_dir: str = ""
     elapsed_time: float = 0.0
     timing: PipelineTiming = field(default_factory=PipelineTiming)
-    estimated_cost_yuan: float = 0.0
+    detection_usage: TokenUsage = field(default_factory=TokenUsage)
+    judge_usage: TokenUsage = field(default_factory=TokenUsage)
 
 
 class VideoHighlightPipeline:
@@ -132,6 +150,11 @@ class VideoHighlightPipeline:
         logger.info("多模态高光检测完成: source=%s, segments=%d",
                     detection_result.source, len(detection_result.segments))
 
+        detection_usage = TokenUsage(
+            input_tokens=detection_result.input_tokens,
+            output_tokens=detection_result.output_tokens,
+        )
+
         segments = [
             {
                 "start_time": seg.start_time,
@@ -145,8 +168,6 @@ class VideoHighlightPipeline:
         logger.info("FFmpeg 拼接完成: output=%s, segments=%d",
                     edit.output_path, len(edit.segments))
 
-        estimated_cost = estimate_ark_cost(metadata.duration, self.config.detector.ark_model)
-
         timing = PipelineTiming(
             fetch=t_fetch,
             detection=t_detect,
@@ -157,7 +178,7 @@ class VideoHighlightPipeline:
             metadata=metadata, edit=edit, session_dir=session_dir,
             elapsed_time=time.time() - t_start,
             timing=timing,
-            estimated_cost_yuan=estimated_cost,
+            detection_usage=detection_usage,
         )
 
     def run_from_path(
@@ -212,8 +233,11 @@ class VideoHighlightPipeline:
             lines.append("\n[剪辑输出]")
             lines.append(f"  输出路径: {result.edit.output_path}")
 
-        if result.estimated_cost_yuan > 0:
-            lines.append(f"\n[预估费用] ¥{result.estimated_cost_yuan:.4f}")
+        if result.detection_usage.total > 0:
+            lines.append(f"\n[Token 消耗 - 多模态识别]")
+            lines.append(f"  输入: {result.detection_usage.input_tokens} tokens")
+            lines.append(f"  输出: {result.detection_usage.output_tokens} tokens")
+            lines.append(f"  合计: {result.detection_usage.total} tokens")
 
         if result.error:
             lines.append(f"\n[警告] {result.error}")
@@ -239,8 +263,11 @@ class VideoHighlightPipeline:
                 "segments": result.edit.segments,
             }
 
-        if result.estimated_cost_yuan > 0:
-            output["estimated_cost_yuan"] = result.estimated_cost_yuan
+        if result.detection_usage.total > 0:
+            output["token_usage"] = {
+                "detection": result.detection_usage.to_dict(),
+                "judge": result.judge_usage.to_dict(),
+            }
 
         if result.error:
             output["error"] = result.error

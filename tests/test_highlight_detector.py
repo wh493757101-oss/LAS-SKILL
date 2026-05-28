@@ -7,8 +7,8 @@ from src.highlight_detector import (
     DetectorConfig,
     DetectionResult,
     HighlightDetector,
+    HighlightSegment,
 )
-from src.rule_engine import HighlightSegment
 from src.video_fetcher import VideoMetadata
 
 

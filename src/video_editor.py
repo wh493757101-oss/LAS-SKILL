@@ -8,27 +8,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
+from .video_fetcher import _get_ffmpeg
+
 logger = logging.getLogger(__name__)
-
-
-# ============================================================
-# FFmpeg / ffprobe binary resolution
-# ============================================================
-
-def _get_ffmpeg() -> str:
-    for candidate in [
-        shutil.which("ffmpeg") or shutil.which("ffmpeg.exe") or "",
-    ]:
-        if candidate and Path(candidate).exists():
-            return candidate
-    try:
-        import imageio_ffmpeg
-        exe: str | None = imageio_ffmpeg.get_ffmpeg_exe()
-        if exe and Path(exe).exists():
-            return exe
-    except ImportError:
-        pass
-    return "ffmpeg"
 
 
 def _get_ffprobe() -> str:

@@ -10,6 +10,7 @@ metadata:
     requires:
       env:
         - ARK_HIGHLIGHT_API_KEY
+        - ARK_HIGHLIGHT_MODEL
       bins:
         - ffmpeg
     primaryEnv: ARK_HIGHLIGHT_API_KEY
@@ -17,11 +18,26 @@ metadata:
       - name: ARK_HIGHLIGHT_API_KEY
         description: "火山引擎 Ark API Key，用于多模态高光识别"
         required: true
+      - name: ARK_HIGHLIGHT_MODEL
+        description: "多模态模型 endpoint（如 ep-xxx）"
+        required: true
       - name: TOS_ACCESS_KEY
         description: "TOS Access Key（TOS 路径输入时必需）"
         required: false
       - name: TOS_SECRET_KEY
         description: "TOS Secret Key（TOS 路径输入时必需）"
+        required: false
+      - name: TOS_ENDPOINT
+        description: "TOS Endpoint（TOS 路径输入时必需）"
+        required: false
+      - name: ARK_JUDGE_API_KEY
+        description: "LLM Judge API Key（评测时必需）"
+        required: false
+      - name: ARK_JUDGE_MODEL
+        description: "LLM Judge 模型（评测时必需）"
+        required: false
+      - name: ARK_JUDGE_BASE_URL
+        description: "LLM Judge Base URL（评测时必需）"
         required: false
 ---
 
@@ -74,8 +90,8 @@ metadata:
 ### Step 0: 前置检查
 
 **环境变量检查：**
-- 确认 `ARK_HIGHLIGHT_API_KEY` 已配置
-- 如输入为本地文件或 TOS 路径，确认 `TOS_ACCESS_KEY` / `TOS_SECRET_KEY` 已配置
+- 确认 `ARK_HIGHLIGHT_API_KEY` 和 `ARK_HIGHLIGHT_MODEL` 已配置
+- 如输入为 TOS 路径，确认 `TOS_ACCESS_KEY` / `TOS_SECRET_KEY` / `TOS_ENDPOINT` 已配置
 - 缺失时必须向用户索要
 
 **输入来源检查：**
@@ -117,8 +133,13 @@ metadata:
 | 变量 | 说明 | 必需 |
 |------|------|------|
 | `ARK_HIGHLIGHT_API_KEY` | 火山引擎 Ark API Key | 是 |
+| `ARK_HIGHLIGHT_MODEL` | 多模态模型 endpoint | 是 |
 | `TOS_ACCESS_KEY` | TOS Access Key | 否（TOS 路径输入时必需） |
 | `TOS_SECRET_KEY` | TOS Secret Key | 否（TOS 路径输入时必需） |
+| `TOS_ENDPOINT` | TOS Endpoint | 否（TOS 路径输入时必需） |
+| `ARK_JUDGE_API_KEY` | LLM Judge API Key | 否（评测时必需） |
+| `ARK_JUDGE_MODEL` | LLM Judge 模型 | 否（评测时必需） |
+| `ARK_JUDGE_BASE_URL` | LLM Judge Base URL | 否（评测时必需） |
 
 ## 错误处理
 
@@ -139,9 +160,9 @@ Pipeline 采用"快速失败"策略：多模态识别不可用时直接返回错
 ## 审查标准
 
 **运维层面：**
-- [ ] 环境变量是否正确配置（ARK_HIGHLIGHT_API_KEY 已设置）
+- [ ] 环境变量是否正确配置（ARK_HIGHLIGHT_API_KEY 和 ARK_HIGHLIGHT_MODEL 已设置）
 - [ ] 输入文件是否成功加载（非空、可解码）
-- [ ] 输出结果是否正确呈现（视频路径 + 片段列表 + JSON）
+- [ ] 输出结果是否正确呈现（视频路径 + 片段列表 + JSON + Token 消耗）
 
 **业务层面：**
 - [ ] 高光片段时长合理（建议 2-10 秒/段）
@@ -151,8 +172,7 @@ Pipeline 采用"快速失败"策略：多模态识别不可用时直接返回错
 ## Gotchas
 
 - **URL 下载**: 使用 yt-dlp，支持主流平台，默认 600 秒超时
-- **URL 下载**: 使用 yt-dlp，支持主流平台，默认 600 秒超时
-- **多模态识别**: 使用火山引擎 Ark API（Doubao 模型），需要 `ARK_HIGHLIGHT_API_KEY`
-- **FFmpeg 拼接**: 使用流拷贝模式（`-c copy`），不重新编码，秒级完成
+- **多模态识别**: 使用火山引擎 Ark API（Doubao 模型），需要 `ARK_HIGHLIGHT_API_KEY` 和 `ARK_HIGHLIGHT_MODEL`
+- **FFmpeg 拼接**: 默认流拷贝模式（`-c copy`），编码不兼容时自动切换重编码
 - **空文件/无效视频**: 0 字节或非视频文件会抛出明确错误
 - **API Key 安全**: 使用环境变量或 `.env` 文件，不要硬编码

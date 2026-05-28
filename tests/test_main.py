@@ -73,7 +73,7 @@ class TestVideoHighlightPipeline:
         pipeline = VideoHighlightPipeline()
         pipeline.fetcher.fetch.return_value = metadata
 
-        from src.rule_engine import HighlightSegment
+        from src.highlight_detector import HighlightSegment
         pipeline.detector.detect.return_value.segments = [
             HighlightSegment(start_time=1.0, end_time=4.0, combined_score=0.9),
             HighlightSegment(start_time=6.0, end_time=9.0, combined_score=0.7),
@@ -141,7 +141,7 @@ class TestVideoHighlightPipeline:
         pipeline = VideoHighlightPipeline()
         pipeline.fetcher.fetch.return_value = metadata
 
-        from src.rule_engine import HighlightSegment
+        from src.highlight_detector import HighlightSegment
         pipeline.detector.detect.return_value.segments = [
             HighlightSegment(start_time=1.0, end_time=4.0, combined_score=0.9),
         ]
@@ -321,7 +321,7 @@ class TestVideoHighlightPipeline:
         pipeline = VideoHighlightPipeline()
         pipeline.fetcher.fetch.return_value = metadata
 
-        from src.rule_engine import HighlightSegment
+        from src.highlight_detector import HighlightSegment
         pipeline.detector.detect.return_value.segments = [
             HighlightSegment(start_time=1.0, end_time=4.0, combined_score=0.9),
         ]

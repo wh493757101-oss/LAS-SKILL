@@ -87,8 +87,7 @@ class ReportGenerator:
         lines.append(f"    高光检测:        {eval_report.cost.timing_detection_avg:.1f}s")
         lines.append(f"    FFmpeg 拼接:     {eval_report.cost.timing_clip_concat_avg:.1f}s")
         lines.append("")
-        lines.append(f"  预估总费用:        ¥{eval_report.cost.total_cost_yuan:.2f}")
-        lines.append(f"  平均费用/case:     ¥{eval_report.cost.avg_cost_yuan:.2f}")
+
         if eval_report.cost.memory_peak_mb > 0:
             lines.append(f"  内存峰值:          {eval_report.cost.memory_peak_mb:.1f} MB")
             lines.append(f"  内存均值:          {eval_report.cost.memory_avg_mb:.1f} MB")
@@ -238,10 +237,12 @@ class ReportGenerator:
         try:
             import tos as _tos
 
-            _bucket = "arkclaw-tos-2124145136-cn-guangzhou"
-            _base_prefix = "arkclaw-tos-ci-yemqjzxa0w9t6r1y3a0v-lk0rj/video-highlight-bucket"
+            _bucket = _os.environ.get("TOS_BUCKET", "arkclaw-tos-2124145136-cn-guangzhou")
+            _base_prefix = _os.environ.get("TOS_BASE_PREFIX", "arkclaw-tos-ci-yemqjzxa0w9t6r1y3a0v-lk0rj/video-highlight-bucket")
+            _endpoint = _os.environ.get("TOS_ENDPOINT", "tos-cn-guangzhou.volces.com")
+            _region = _endpoint.split(".", 1)[0].replace("tos-", "") if _endpoint.startswith("tos-") else "cn-guangzhou"
             _folder = out_dir.name
-            _client = _tos.TosClientV2(_ak, _sk, "tos-cn-guangzhou.volces.com", "cn-guangzhou")
+            _client = _tos.TosClientV2(_ak, _sk, _endpoint, _region)
 
             for _f in out_dir.iterdir():
                 if _f.is_file():
@@ -296,8 +297,6 @@ class ReportGenerator:
                         "detection_avg": round(eval_report.cost.timing_detection_avg, 1),
                         "clip_concat_avg": round(eval_report.cost.timing_clip_concat_avg, 1),
                     },
-                    "total_cost_yuan": eval_report.cost.total_cost_yuan,
-                    "avg_cost_yuan": eval_report.cost.avg_cost_yuan,
                 },
                 "by_category": {
                     k: {"f1": round(v["f1"], 3), "count": v["count"]}

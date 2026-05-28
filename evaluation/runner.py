@@ -142,6 +142,8 @@ class EvalRunner:
         _, peak_bytes = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
+        predicted: list[dict[str, Any]] = []
+        judge_segments: list[dict[str, Any]] = []
         if result.edit and result.edit.segments:
             predicted = [
                 {
@@ -162,15 +164,13 @@ class EvalRunner:
                 for seg in result.edit.segments
             ]
 
-        # 收集 token 用量（从 detector 获取）
+        # 收集 token 用量
         pipeline.detector  # ensure initialized
         detector = pipeline._detector
-        usage = {}
-        if detector:
-            usage = {
-                "api_calls": detector.call_count,
-                "api_retries": detector.retry_count,
-            }
+        api_calls = detector.call_count if detector else 0
+        api_retries = detector.retry_count if detector else 0
+        detection_usage = result.detection_usage.to_dict()
+        judge_usage = result.judge_usage.to_dict()
 
         # 收集阶段耗时
         timing = result.timing.to_dict() if result.timing else {}
@@ -185,17 +185,17 @@ class EvalRunner:
             "target": description,
             "style": instruction.get("style", ""),
             "core_highlight_definition": instruction.get("core_highlight_definition", ""),
-            "usage": usage,
+            "detection_usage": detection_usage,
+            "judge_usage": judge_usage,
             "video_duration": result.metadata.duration,
             "elapsed_time": result.elapsed_time,
-            "api_calls": usage.get("api_calls", 1),
-            "api_retries": usage.get("api_retries", 0),
+            "api_calls": api_calls,
+            "api_retries": api_retries,
             "memory_peak_mb": peak_bytes / (1024 * 1024),
             "memory_avg_mb": 0.0,
             "edit_output_path": result.edit.output_path if result.edit else "",
-            "judge_segments": judge_segments if result.edit and result.edit.segments else [],
+            "judge_segments": judge_segments,
             "timing": timing,
-            "estimated_cost_yuan": result.estimated_cost_yuan,
         }
 
     def _run_concurrent(self, cases: list[dict[str, Any]]) -> list[dict[str, Any]]:

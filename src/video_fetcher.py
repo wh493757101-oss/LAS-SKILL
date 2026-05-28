@@ -135,9 +135,11 @@ class TosSource:
         output_path = output_dir / Path(key).name
         try:
             import tos as _tos
+            _endpoint = self.endpoint or "tos-cn-guangzhou.volces.com"
+            _region = _endpoint.split(".", 1)[0].replace("tos-", "") if _endpoint.startswith("tos-") else "cn-guangzhou"
             _client = _tos.TosClientV2(
                 self.access_key, self.secret_key,
-                "tos-cn-guangzhou.volces.com", "cn-guangzhou",
+                _endpoint, _region,
             )
             _client.get_object_to_file(bucket, key, str(output_path))
         except ImportError:
@@ -293,5 +295,4 @@ class VideoFetcher:
             height=height,
         )
 
-    def _convert_to_mp4(self, src: str) -> str:
-        return _convert_to_mp4(src, self.output_dir)
+

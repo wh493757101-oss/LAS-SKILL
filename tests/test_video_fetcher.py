@@ -141,8 +141,8 @@ class TestVideoFetcher:
 
     def test_convert_to_mp4(self, mocker, tmp_path):
         mocker.patch("subprocess.run")
-        fetcher = VideoFetcher(output_dir=str(tmp_path))
-        result = fetcher._convert_to_mp4("/tmp/input.mov")
+        from src.video_fetcher import _convert_to_mp4
+        result = _convert_to_mp4("/tmp/input.mov", tmp_path)
         assert result.endswith(".mp4")
 
     def test_fetch_empty_file_raises(self, tmp_path):
@@ -173,9 +173,9 @@ class TestVideoFetcher:
 
     def test_convert_to_mp4_failure_raises(self, mocker, tmp_path):
         mocker.patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "ffmpeg", stderr="conversion error"))
-        fetcher = VideoFetcher(output_dir=str(tmp_path))
+        from src.video_fetcher import _convert_to_mp4
         with pytest.raises(RuntimeError, match="视频转码失败"):
-            fetcher._convert_to_mp4("/tmp/input.mov")
+            _convert_to_mp4("/tmp/input.mov", tmp_path)
 
 
 class TestArkFileSource:

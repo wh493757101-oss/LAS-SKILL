@@ -281,7 +281,6 @@ class LLMJudge:
             category=category,
             target=target or "精彩集锦",
             style=style or "无特定要求",
-            core_highlight_definition="视频中最重要的高光时刻和关键场景",
             segments="\n".join(segment_lines) if segment_lines else "无",
         )
 

@@ -139,7 +139,7 @@ Avg mAP  — [0.5:0.05:0.95] 平均
 评测框架支持对比不同配置：
 - Full pipeline vs 仅 FFmpeg 降级
 - Full pipeline vs 纯规则引擎
-- 有 ASR vs 无 ASR
+- 有 description vs 无 description
 - 有后处理 vs 无后处理
 
 **改动**：在 `runner.py` 中增加 `ablation_configs` 参数，一次运行输出多组对比结果。

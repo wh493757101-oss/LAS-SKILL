@@ -226,7 +226,8 @@ class TestHighlightEvaluator:
                 "predicted": [{"start_time": 0, "end_time": 5}],
                 "ground_truth": [{"start_time": 0, "end_time": 5}],
                 "category": "体育", "difficulty": "easy", "source_type": "local",
-                "usage": {"prompt_tokens": 5000, "completion_tokens": 500},
+                "detection_usage": {"input_tokens": 5000, "output_tokens": 500, "total_tokens": 5500},
+                "judge_usage": {"input_tokens": 2000, "output_tokens": 200, "total_tokens": 2200},
                 "video_duration": 60.0,
             },
             {
@@ -234,16 +235,17 @@ class TestHighlightEvaluator:
                 "predicted": [{"start_time": 0, "end_time": 5}],
                 "ground_truth": [{"start_time": 0, "end_time": 5}],
                 "category": "体育", "difficulty": "easy", "source_type": "local",
-                "usage": {"prompt_tokens": 3000, "completion_tokens": 300},
+                "detection_usage": {"input_tokens": 3000, "output_tokens": 300, "total_tokens": 3300},
+                "judge_usage": {"input_tokens": 1000, "output_tokens": 100, "total_tokens": 1100},
                 "video_duration": 120.0,
             },
         ]
         report = evaluator.evaluate_all(results)
-        assert report.cost.total_tokens == 8800
-        assert report.cost.prompt_tokens == 8000
-        assert report.cost.completion_tokens == 800
+        assert report.cost.total_tokens == 12100
+        assert report.cost.prompt_tokens == 11000
+        assert report.cost.completion_tokens == 1100
         assert report.cost.video_duration == 180.0
-        assert report.cost.tokens_per_minute == pytest.approx(2933.33, rel=0.01)
+        assert report.cost.tokens_per_minute == pytest.approx(4033.33, rel=0.01)
 
 
 class TestParseTargetDuration:

@@ -5,8 +5,20 @@ from pathlib import Path
 from typing import Any
 
 from .ark_client import ArkClient, ArkConfig
-from .rule_engine import HighlightSegment
 from .video_fetcher import VideoMetadata
+
+
+@dataclass
+class HighlightSegment:
+    start_time: float
+    end_time: float
+    audio_score: float = 0.0
+    visual_score: float = 0.0
+    combined_score: float = 0.0
+
+    @property
+    def duration(self) -> float:
+        return self.end_time - self.start_time
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +59,8 @@ class DetectionResult:
     segments: list[HighlightSegment] = field(default_factory=list)
     source: str = "multimodal"
     raw_response: dict[str, Any] | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 class HighlightDetector:
@@ -106,10 +120,16 @@ class HighlightDetector:
         parsed = self.ark_client.extract_json(response)
         segments = self._parse_segments(parsed, metadata.duration)
 
+        usage = parsed.get("_usage", {})
+        input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", 0))
+        output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))
+
         return DetectionResult(
             segments=segments,
             source="multimodal",
             raw_response=parsed,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
 
     def _parse_segments(
